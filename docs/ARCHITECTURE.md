@@ -112,14 +112,15 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 |-|-|-|-|
 | `GET /api/health` | → `{ok, version, graphs}` | — | done |
 | `POST /api/{t}/init` | → `{tenant, head}` | A | done |
-| `POST /api/{t}/seed` | → `{branches, commits}`: launch-plan room (main, planner, scheduler) | A `seed.py` | P1 |
+| `POST /api/{t}/seed` | → `{created, branches, facts_on_main, facts_on_scheduler}`: launch-plan room (main, planner, scheduler) | A `seed.py` | done |
 | `POST /api/{t}/branches/{name}` · `GET .../checkout` · `GET .../log` | `Fact[]` / `Commit[]` | A | done |
 | `POST /api/{t}/commits` | `CommitRequest` → `{commit, retries}` | A | done |
 | `GET /api/{t}/facts/{id}/why` | → why-path rows | A | done |
+| `GET /api/{t}/branches/{name}/procedures` | → `Procedure[]` | A | done |
 | `POST /api/{t}/agents/{agent}/messages` (SSE) | `{message, session_id}` → events `token`, `commit`, `error`, `: ping` every 15 s | B `agents.step` | P1 |
-| `POST /api/{t}/merge/preview` | `{source, target}` → `MergeResult` | A `plan_merge` | P2 |
-| `POST /api/{t}/merge/resolve` | `{source, target, choices}` → `{merge_commit, rederived}` | A `apply_merge` + B Arbiter | P2 |
-| `POST /api/{t}/revert` | `{branch, commit_id}` → `{reverted, unchanged}` | A | P2 |
+| `POST /api/{t}/merge/preview` | `{source, target}` → `MergeResult` | A `plan_merge` | done |
+| `POST /api/{t}/merge/resolve` | `{source, target, choices, agent_id?}` → `MergeApplied` (`invalidated` = facts for the Arbiter to re-derive) | A `apply_merge` | done |
+| `POST /api/{t}/revert` | `{branch, commit_id, agent_id?}` → `RevertResult` | A `revert` | done |
 | `POST /api/{t}/agents/{agent}/kill` | → `{successor, inherited}` (handoff) | B | P2 |
 | `POST /api/{t}/load-test` | `{writers}` → `{commits, lost, retries, p50_ms, p95_ms}` | C `run_load` | P2 |
 | `GET /api/{t}/scorecard` | → live Track 02 counts | A `scorecard.cypher` | done |
