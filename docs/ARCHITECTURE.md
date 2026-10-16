@@ -57,7 +57,7 @@ Invariants (tests enforce these; do not break them):
 4. **Facts are never edited or deleted.** A change = `REMOVED_IN` the old fact plus `ADDED_IN` a new one. History stays complete.
 5. **Agents read memory only through `checkout(branch)`** (M2). No in-process caches, no message passing between agents.
 6. Fixed predicates: `deadline, owner, status, location, budget, decision, preference, depends_on, contact`.
-7. **One visible value per key per branch.** A commit that adds `s|p` must `REMOVED_IN` the fact currently visible for that key. **Not enforced yet:** Person A, Phase 1. `test_one_visible_value_per_key` is a strict xfail until then.
+7. **One visible value per key per branch.** A commit that adds `s|p` must `REMOVED_IN` the fact currently visible for that key. Enforced in `commit_cas`, which `REMOVED_IN`s the visible same-key fact; `CommitRequest` rejects duplicate keys within one commit. Test: `test_one_visible_value_per_key`.
 8. Every agent turn is an `(:Episode)` under a `(:Session)` (`HAS_TURN`) and linked to its commit (`FROM_EPISODE`). Done in `commit_cas`.
 
 ## 3. Verified FalkorDB behaviour (tested 2026-10-16 on `falkordb/falkordb:latest`)

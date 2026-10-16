@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Fixed predicate list keeps LLM extraction reliable (winplan section 5).
 Predicate = Literal[
@@ -79,6 +79,15 @@ class CommitRequest(BaseModel):
     removed_procedures: list[str] = []
     derived: list[Derivation] = []
     episodes: list[Episode] = []
+    kind: Literal["commit", "merge", "revert", "handoff", "seed"] = "commit"
+
+    @model_validator(mode="after")
+    def _one_fact_per_key(self):
+        # commit_cas retires the old value per key; two new values for one key would both stay visible.
+        keys = [(f.s, f.p) for f in self.facts]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate (s, p) in facts: one value per key per commit")
+        return self
 
 
 class Commit(BaseModel):
@@ -87,6 +96,7 @@ class Commit(BaseModel):
     msg: str | None = None
     agent_id: str | None = None
     ts: int | None = None
+    kind: str | None = None
     added: int = 0
     removed: int = 0
 

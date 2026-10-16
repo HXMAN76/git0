@@ -50,6 +50,7 @@ class MemoryRepo:
             "expected": expected,
             "id": new_id(),
             "msg": req.msg,
+            "kind": req.kind,
             "agent_id": req.agent_id,
             "facts": [f.model_dump() for f in req.facts],
             "removed": req.removed,
