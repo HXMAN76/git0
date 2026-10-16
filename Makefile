@@ -5,11 +5,14 @@ setup:          ## install python + web deps
 	uv sync
 	cd web && pnpm install
 
-db-up:          ## start FalkorDB (podman or docker)
-	podman compose up -d falkordb || docker compose up -d falkordb
+COMPOSE := $(shell if docker compose version >/dev/null 2>&1; then echo "docker compose"; \
+	elif podman compose version >/dev/null 2>&1; then echo "podman compose"; else echo "uvx podman-compose"; fi)
+
+db-up:          ## start FalkorDB (docker compose, podman compose, or uvx podman-compose)
+	$(COMPOSE) up -d falkordb
 
 db-down:
-	podman compose down || docker compose down
+	$(COMPOSE) down
 
 api:            ## FastAPI on :8000 with reload
 	uv run uvicorn membranch.api.app:app --reload --port 8000

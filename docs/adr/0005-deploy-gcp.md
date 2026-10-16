@@ -1,6 +1,6 @@
 # ADR 0005: Deploy on Google Cloud (Cloud Run + private FalkorDB VM)
 
-**Status:** accepted 2026-10-16 · supersedes [ADR 0004](0004-deploy-railway.md) · **Owner:** Person D (+ lead for billing)
+**Status:** superseded by [ADR 0006](0006-deploy-aws.md) (team switched to an AWS account) · fallback · **Owner:** Person D
 
 ## Context
 The team has a GCP free trial ($300 credit, 90 days, card required). We need a live HTTPS URL that stays warm through judging, auto-deploys from `main`, and keeps FalkorDB off the public internet. Research: [docs/research/06-gcp-deploy.md](../research/06-gcp-deploy.md).

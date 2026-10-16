@@ -1,4 +1,4 @@
-name: deploy
+name: deploy-gcp
 
 # Deploys main to Cloud Run after CI passes (ADR 0005). Keyless: GitHub OIDC -> Workload Identity Federation.
 # Inert until `deploy/gcp/setup.sh github` has set the GCP_* repo variables.

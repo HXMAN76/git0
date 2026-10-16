@@ -1,10 +1,10 @@
 # Git + GitHub workflow
 
-Trunk-based with short-lived branches. **`main` is always deployable**: `deploy.yml` ships every green push to Cloud Run, so a broken `main` breaks the live demo.
+Trunk-based with short-lived branches. **`main` is always deployable**: `deploy-aws.yml` ships every green push to the AWS host, so a broken `main` breaks the live demo.
 
 ## Branches
 - `main`: PR + green CI + 1 buddy approval, squash merge only. The repo is **private on the free plan, so GitHub can't enforce this**. It's a team rule: never `git push origin main`.
-- Work branches: `<person>/<phase>-<topic>`, e.g. `a/p1-merge-commit`, `b/p1-llm-client`, `c/p1-baselines`, `d/p0-gcp-deploy`. Keep each one under ~4 hours of work. Open the PR early as a draft.
+- Work branches: `<person>/<phase>-<topic>`, e.g. `a/p1-merge-commit`, `b/p1-llm-client`, `c/p1-baselines`, `d/p0-aws-deploy`. Keep each one under ~4 hours of work. Open the PR early as a draft.
 - Never commit straight to `main` (admins can bypass in an emergency. Post in the channel if you do).
 
 ## The loop for every task

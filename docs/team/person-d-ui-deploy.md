@@ -4,12 +4,12 @@
 **Your output is the 60-second judge flow (M11).** Deploy on day 1, not at the end.
 
 ## Read first
-`docs/research/03-frontend.md` (versions, canvas API, SSE), `docs/research/06-gcp-deploy.md` + `deploy/gcp/README.md` (GCP runbook), ADR 0005, winplan §8 (judge flow) and §9 (video).
+`docs/research/03-frontend.md` (versions, canvas API, SSE), `docs/research/07-aws-deploy.md` + `deploy/aws/README.md` (AWS runbook), ADR 0006, winplan §8 (judge flow) and §9 (video).
 
 ## Phase 0 (→ Oct 16 18:00)
-- [ ] With the lead (who holds the GCP credits): run `deploy/gcp/setup.sh` steps from `deploy/gcp/README.md`
-- [ ] `/api/health` ok on the `run.app` URL (proves Cloud Run → VPC → FalkorDB with password)
-- [ ] SSE check: `curl -N` shows events streaming one by one through Cloud Run (unverified in research)
+- [ ] With whoever has the AWS credentials: run the `deploy/aws/setup.sh` steps from `deploy/aws/README.md`
+- [ ] `/api/health` ok on the `cloudfront.net` URL (proves CloudFront → EC2 → FalkorDB with password)
+- [ ] SSE check: `curl -N` shows events streaming one by one through CloudFront. **Every SSE endpoint sends a `: ping` comment every 15 s** (CloudFront cuts an origin that's silent for 60 s)
 - [ ] Push a trivial PR to `main` → `deploy` workflow goes green → new revision live
 
 ## Phase 1 (→ Oct 17 10:00)

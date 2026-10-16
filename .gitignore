@@ -28,3 +28,5 @@ web/dist/
 # graphify output
 graphify-out/
 deploy/gcp/membranch.env
+deploy/aws/membranch.env
+deploy/aws/membranch.state

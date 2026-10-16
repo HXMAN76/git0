@@ -1,5 +1,7 @@
 # 06 - Deploying the hackathon app on Google Cloud (free trial credits)
 
+> **Superseded (2026-10-16):** we deploy on AWS ([ADR 0006](../adr/0006-deploy-aws.md)). Kept as the fallback plan.
+
 Research date: 2026-10-16. Region: asia-south1 (Mumbai). Team: India, 4 people, 3-day hackathon, judging window about 1 week.
 Stack: FastAPI (Python 3.12) container that also serves a built React SPA, SSE streaming, FalkorDB `falkordb/falkordb:v4.22.1` (port 6379, data dir per user brief `/var/lib/falkordb/data`, about 1-2 GB RAM).
 

@@ -1,0 +1,64 @@
+name: deploy-aws
+
+# Deploys main to the EC2 host behind CloudFront after CI passes (ADR 0006).
+# Keyless: GitHub OIDC -> IAM role (trust limited to this repo on refs/heads/main).
+# Inert until `deploy/aws/setup.sh github` has set the AWS_* repo variables.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      vars.AWS_DEPLOY_ROLE_ARN != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: build + push
+        run: |
+          docker build -t "${{ vars.AWS_ECR_URI }}:$SHA" .
+          docker push "${{ vars.AWS_ECR_URI }}:$SHA"
+      - name: roll out on the host via SSM Run Command
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.AWS_INSTANCE_ID }}" \
+            --document-name AWS-RunShellScript \
+            --comment "membranch deploy $SHA" \
+            --parameters "commands=[\"/usr/local/bin/membranch-deploy ${{ vars.AWS_ECR_URI }}:$SHA\"]" \
+            --query Command.CommandId --output text)
+          echo "command $CMD_ID"
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
+              --instance-id "${{ vars.AWS_INSTANCE_ID }}" --query Status --output text 2>/dev/null || echo Pending)
+            case "$STATUS" in
+              Success) break ;;
+              Failed|Cancelled|TimedOut) break ;;
+            esac
+            sleep 5
+          done
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "${{ vars.AWS_INSTANCE_ID }}" \
+            --query '[StandardOutputContent,StandardErrorContent]' --output text
+          [ "$STATUS" = "Success" ]
+      - name: smoke test through CloudFront
+        run: curl -fsS --retry 5 --retry-delay 5 "${{ vars.PUBLIC_URL }}/api/health"

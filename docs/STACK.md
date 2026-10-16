@@ -32,9 +32,9 @@ Versions are what `uv sync` / `pnpm install` resolved today. Full research with 
 | Piece | Choice | Why |
 |-|-|-|
 | Local DB | `compose.yaml` (podman or docker) | `make db-up` |
-| Deploy | **GCP (free-trial credit)**: Cloud Run `membranch-api` (min 1 instance, asia-south1) + private FalkorDB `e2-medium` VM via Direct VPC egress. Secrets in Secret Manager. Keyless CD via Workload Identity Federation ([ADR 0005](adr/0005-deploy-gcp.md), runbook `deploy/gcp/README.md`) | Managed HTTPS URL, no cold starts, ~$20-30 of credit for the week. Railway (ADR 0004) is the fallback. FalkorDB Cloud free tier stops after 1 idle day, has no TLS, deletes after 7 days: rejected |
+| Deploy | **AWS** (friend's account): one EC2 `t3.small` in ap-south-1 running compose (FalkorDB unpublished + api) behind **CloudFront** (`*.cloudfront.net` HTTPS, caching off). Secrets in SSM Parameter Store ([ADR 0006](adr/0006-deploy-aws.md), runbook `deploy/aws/README.md`) | No domain needed, no cold starts, ~$10 for the week. FalkorDB never public (SG allows CloudFront only). GCP (ADR 0005) and Railway (ADR 0004) are fallbacks |
 | Image | One Dockerfile: node stage builds `web/dist`, uv stage serves it via FastAPI `StaticFiles` | One URL, no CORS in prod |
-| CD | `.github/workflows/deploy.yml`: after `ci` passes on `main` → build → Artifact Registry → new Cloud Run revision → `/api/health` smoke test | Inert until `deploy/gcp/setup.sh github` sets the repo variables |
+| CD | `.github/workflows/deploy-aws.yml`: after `ci` passes on `main` → build → ECR → SSM Run Command `membranch-deploy <image>` on the host → `/api/health` via CloudFront. Keyless (GitHub OIDC → IAM role) | Inert until `deploy/aws/setup.sh github` sets the repo variables |
 | CI | GitHub Actions: ruff, Cypher-docs drift check, pytest with a `falkordb/falkordb` service container, web lint/typecheck/test/build | Same commands as `make check` |
 
 ## Integration optimisations (why the repo looks like this)

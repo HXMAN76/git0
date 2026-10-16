@@ -20,6 +20,7 @@
 - [ ] Tests: cached fixtures in `tests/llm/fixtures/`. One live test marked `@pytest.mark.llm`, skipped without `GROQ_API_KEY`
 
 ## Phase 2 (→ Oct 17 22:00)
+- [ ] Agent replies stream over SSE. Emit a `: ping` heartbeat every 15 s while the LLM is thinking (CloudFront limit, ADR 0006)
 - [ ] Scheduler + Notes agents on their own branches. Scheduler derives tasks from facts ("book venue Fri" `DERIVED_FROM` "launch=Fri")
 - [ ] Arbiter: takes A's `MergeResult`, writes a plain-language explanation per conflict ("Planner and Scheduler disagree…"). Once the human picks, it re-invokes **only** the owners of invalidated derived facts. Count the tokens saved vs re-planning everything (for C)
 - [ ] Handoff: `kill(agent)` → new agent instance checks out the same branch, reads `log`, says what it inherited
