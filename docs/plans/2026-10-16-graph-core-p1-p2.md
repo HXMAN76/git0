@@ -5,13 +5,13 @@ Spec: `docs/ARCHITECTURE.md` (graph model, invariants 1-8, REST contract table),
 Branch: `a/p1-p2-graph-core` (worktree `.worktrees/a-graph-core`). One PR closes #17 #5 #6 #11 #12 #18.
 
 ## Global Constraints
-- Every query lives in `cypher/<name>.cypher` with `// name: <name>` header + a comment saying why. Python loads it via `membranch.core.queries.Q[...]`. No write Cypher inlined in Python. Run `uv run python scripts/gen_cypher_docs.py` after adding/changing any `.cypher` file and commit `docs/CYPHER.md`.
+- Every query lives in `cypher/<name>.cypher` with `// name: <name>` header + a comment saying why. Python loads it via `git0.core.queries.Q[...]`. No write Cypher inlined in Python. Run `uv run python scripts/gen_cypher_docs.py` after adding/changing any `.cypher` file and commit `docs/CYPHER.md`.
 - Every write = ONE Cypher query (FalkorDB has no multi-statement transactions). After a CAS `MATCH`, attach optional work with unit subqueries `CALL { WITH n UNWIND $list AS x ... }` (no RETURN inside). Never a bare `UNWIND` after the CAS (empty list drops the row and fakes a CAS failure). Aggregation (`WITH ..., collect(...)`) inside a unit `CALL {}` works (verified).
 - FalkorDB has no `EXISTS {}`. Use `OPTIONAL MATCH` + `collect` + `none()`/`any()`. `list.dedup()` exists. Property values must be primitives or arrays of primitives.
 - Visibility rule (same everywhere): fact F is visible at commit H iff F `ADDED_IN` a commit whose id is in `H.ancestors + [H.id]` and F has no `REMOVED_IN` to a commit in that list.
 - Writes use `graph.query`, reads use `graph.ro_query`. Each `MemoryRepo` method = one query (a method may run one read to plan, then one write).
 - Tests: pytest against real FalkorDB at `redis://localhost:6379` using the `repo` fixture in `tests/conftest.py` (fresh throwaway graph per test). Never mock the graph. Run `uv run pytest -q` and `uv run ruff check . && uv run ruff format --check .` before each commit. Line length 110.
-- Contracts in `src/membranch/core/models.py`: changes must be additive unless this plan says otherwise. Pydantic v2.
+- Contracts in `src/git0/core/models.py`: changes must be additive unless this plan says otherwise. Pydantic v2.
 - Fail loudly: raise (`ValueError`, `KeyError`, `CommitConflictError`), never return fake/default data on errors.
 - Commit messages: Conventional Commits, scope `core`/`cypher`/`api`/`docs`, body says why, trailer `Assisted-by: Claude Code`. One or more commits per task.
 - Fixed predicates: `deadline, owner, status, location, budget, decision, preference, depends_on, contact`.
@@ -19,7 +19,7 @@ Branch: `a/p1-p2-graph-core` (worktree `.worktrees/a-graph-core`). One PR closes
 
 ## Task 1: One visible value per key + commit kind (#17)
 
-Files: `cypher/commit_cas.cypher`, `src/membranch/core/models.py`, `src/membranch/core/repo.py`, `tests/core/test_repo.py`.
+Files: `cypher/commit_cas.cypher`, `src/git0/core/models.py`, `src/git0/core/repo.py`, `tests/core/test_repo.py`.
 
 1. In `commit_cas.cypher`, add a unit `CALL {}` block (place it BEFORE the block that creates new facts) that, for each new fact `f` in `$facts`, finds facts with `key = f.s + '|' + f.p` that are visible at the parent (ADDED_IN a commit whose id is in `n.ancestors`, not REMOVED_IN any commit in `n.ancestors`) and links them with `MERGE (old)-[:REMOVED_IN]->(n)`. Verified working shape:
    ```cypher
@@ -43,7 +43,7 @@ Files: `cypher/commit_cas.cypher`, `src/membranch/core/models.py`, `src/membranc
 
 ## Task 2: Merge rules + merge commit + checkout at a commit (#5)
 
-Files: new `cypher/seed_rules.cypher`, `cypher/merge_commit.cypher`, `cypher/checkout_commit.cypher`, `cypher/rules.cypher`; `src/membranch/core/repo.py`; `tests/core/test_merge_commit.py`.
+Files: new `cypher/seed_rules.cypher`, `cypher/merge_commit.cypher`, `cypher/checkout_commit.cypher`, `cypher/rules.cypher`; `src/git0/core/repo.py`; `tests/core/test_merge_commit.py`.
 
 1. `seed_rules.cypher`: `UNWIND $rules AS r MERGE (x:Rule {p: r.p}) ON CREATE SET x.strategy = r.strategy RETURN count(x) AS rules`. Python constant `DEFAULT_RULES` in `repo.py`: deadline, owner, budget, decision, location, depends_on, contact = `needs-review`; preference, status = `latest-wins`. `MemoryRepo.init()` runs `init_repo` then `seed_rules` (both idempotent).
 2. `rules.cypher` (read): `MATCH (r:Rule) RETURN r.p AS p, r.strategy AS strategy`. `MemoryRepo.rules() -> dict[str, str]`.
@@ -58,7 +58,7 @@ Files: new `cypher/seed_rules.cypher`, `cypher/merge_commit.cypher`, `cypher/che
 
 ## Task 3: plan_merge, deterministic 3-way classification (#6, part of #11)
 
-Files: `src/membranch/core/merge.py`, `src/membranch/core/models.py`, new `cypher/dependents_visible.cypher`, `cypher/precedent_lookup.cypher`, `src/membranch/core/repo.py`, `tests/core/test_plan_merge.py`.
+Files: `src/git0/core/merge.py`, `src/git0/core/models.py`, new `cypher/dependents_visible.cypher`, `cypher/precedent_lookup.cypher`, `src/git0/core/repo.py`, `tests/core/test_plan_merge.py`.
 
 Semantics (git-like): a merge commit's `ancestors` include both sides, so all changes made on either side since the merge base apply automatically. `plan_merge` only decides what the merge commit must additionally REMOVE, and which keys need a human.
 
@@ -78,7 +78,7 @@ Semantics (git-like): a merge commit's `ancestors` include both sides, so all ch
 
 ## Task 4: apply_merge with cascade + precedent (#11)
 
-Files: `src/membranch/core/merge.py`, `src/membranch/core/models.py`, `tests/core/test_apply_merge.py`.
+Files: `src/git0/core/merge.py`, `src/git0/core/models.py`, `tests/core/test_apply_merge.py`.
 
 1. Contract change (ruling): `apply_merge` returns a new model `MergeApplied(merge_commit: str, removed: list[str], invalidated: list[Fact])` instead of `str`. `invalidated` = dependents removed by the cascade (the Arbiter re-derives only these).
 2. `apply_merge(repo, plan, choices: dict[str, str], agent_id: str = "human", msg: str | None = None) -> MergeApplied`:
@@ -90,7 +90,7 @@ Files: `src/membranch/core/merge.py`, `src/membranch/core/models.py`, `tests/cor
 
 ## Task 5: Revert with dependency cascade (#11)
 
-Files: new `cypher/commit_changes.cypher`, `src/membranch/core/repo.py` (or new `src/membranch/core/revert.py`), `src/membranch/core/models.py`, `tests/core/test_revert.py`.
+Files: new `cypher/commit_changes.cypher`, `src/git0/core/repo.py` (or new `src/git0/core/revert.py`), `src/git0/core/models.py`, `tests/core/test_revert.py`.
 
 1. `commit_changes.cypher` (read): facts `ADDED_IN` and `REMOVED_IN` commit `$commit` with id, s, p, o, key.
 2. Model `RevertResult(revert_commit: str, reverted: list[str], cascaded: list[str], restored: list[str], unchanged: int)`.
@@ -99,7 +99,7 @@ Files: new `cypher/commit_changes.cypher`, `src/membranch/core/repo.py` (or new 
 
 ## Task 6: Seed the launch-plan room (#18)
 
-Files: new `src/membranch/seed.py`, `src/membranch/api/app.py`, `tests/core/test_seed.py`, `tests/api/test_seed_api.py`.
+Files: new `src/git0/seed.py`, `src/git0/api/app.py`, `tests/core/test_seed.py`, `tests/api/test_seed_api.py`.
 
 1. `async def seed(repo: MemoryRepo) -> dict` builds the demo team room deterministically (fixed fact ids prefixed `seed-`), idempotent: if branch `scheduler` already exists return the summary without writing.
    - `repo.init()`; commit on `main` (agent `planner`, kind `seed`, one Episode in session `seed`, text "Kickoff: launch plan") with exactly 37 facts: `launch|deadline=friday` (id `seed-launch-deadline`), `launch|owner=asha`, `launch|location=hall b`, `launch|budget=50000 inr`, plus 33 more plausible launch-project facts using only the fixed predicates over entities such as website, press_kit, qa, beta, docs, demo_video, social, sponsors, swag, caterer_shortlist (each entity/predicate pair unique).
@@ -111,7 +111,7 @@ Files: new `src/membranch/seed.py`, `src/membranch/api/app.py`, `tests/core/test
 
 ## Task 7: Live scorecard (#12)
 
-Files: new `cypher/scorecard.cypher`, `src/membranch/core/models.py`, `src/membranch/core/repo.py`, `src/membranch/api/app.py`, `tests/core/test_scorecard.py`.
+Files: new `cypher/scorecard.cypher`, `src/git0/core/models.py`, `src/git0/core/repo.py`, `src/git0/api/app.py`, `tests/core/test_scorecard.py`.
 
 1. `scorecard.cypher` (read, ONE query) returns: `episodes`, `sessions`, `facts_on_main` (visible on main), `procedures_on_main`, `commits`, `merges` (kind merge), `reverts` (kind revert), `handoffs` (kind handoff), `conflicts_resolved`, `precedents_reused` (sum of `count - 1` over Precedent nodes with count > 1), `agents`. Use chained `OPTIONAL MATCH ... WITH count(...)` or returning `CALL {}` subqueries, whichever works on FalkorDB; empty graph must return zeros, not zero rows.
 2. Model `Scorecard` with those int fields plus `tenants: int` and `query_ms: float`. `MemoryRepo.scorecard() -> Scorecard` (tenants filled by the API layer; `query_ms` from the result's internal execution time, `result.run_time_ms` in falkordb-py).
@@ -120,7 +120,7 @@ Files: new `cypher/scorecard.cypher`, `src/membranch/core/models.py`, `src/membr
 
 ## Task 8: Merge, revert and procedures endpoints
 
-Files: `src/membranch/api/app.py`, `tests/api/test_merge_api.py`. Matches the REST table in `docs/ARCHITECTURE.md` §6 (update its Status column to `done` for the rows this task and Tasks 6-7 deliver).
+Files: `src/git0/api/app.py`, `tests/api/test_merge_api.py`. Matches the REST table in `docs/ARCHITECTURE.md` §6 (update its Status column to `done` for the rows this task and Tasks 6-7 deliver).
 
 1. `POST /api/{tenant}/merge/preview` body `{source, target}` returns `MergeResult` (ValueError gives 400).
 2. `POST /api/{tenant}/merge/resolve` body `{source, target, choices: dict[str, str], agent_id: str = "human"}`: re-plan, then `apply_merge`; returns `MergeApplied`. Invalid/missing choices give 400; `CommitConflictError` gives 409.
