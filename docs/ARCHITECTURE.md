@@ -70,13 +70,13 @@ Invariants (tests enforce these; do not break them):
 | `[:PARENT*0..200]` | Works | Showcase checkout + DAG view |
 | `GRAPH.COPY` | Works locally | "Fork team memory" button (measure ms) |
 | 20 concurrent CAS writers | 21 commits, linear seq, 0 lost | M6 baseline (`tests/core/test_repo.py`) |
-| Default `TIMEOUT` | 1000 ms | Raised to 5000 in `compose.yaml`; set the same on Railway |
-| Engine version | `latest` = graph module **4.22.1** (2026-10-14) | Pinned `falkordb/falkordb:v4.22.1` in compose + CI + Railway |
+| Default `TIMEOUT` | 1000 ms | Raised to 5000 in `compose.yaml`; set the same on the GCP VM (`deploy/gcp/falkordb-startup.sh`) |
+| Engine version | `latest` = graph module **4.22.1** (2026-10-14) | Pinned `falkordb/falkordb:v4.22.1` in compose + CI + GCP VM |
 | `CALL algo.bfs(h, 100000, 'PARENT') YIELD nodes` | Works, ~2 ms. **Excludes the start node** | Alternative to `ancestors` lists (see below) |
 | Pattern predicate `WHERE NOT (n)-[:R]->()` | Works | Use instead of `EXISTS` |
 | `WHERE c.id IN anc` with `anc` from a previous `WITH` | Label scan, no index | Checkout is O(facts × history) |
 | Checkout / merge-base at 250 · 500 · 1000 linear commits | 17 · 40 · 103 ms / 2 · 3 · 6 ms | Fine for the demo (<200 commits per tenant) |
-| `ancestors` list memory | O(N²): ~21 MB at 1000 commits, ~82 MB at 2000 (research agent, FalkorDBLite) | OK with 2 h tenant TTL on Railway. Person A measures BFS-based checkout in P3 and switches if needed |
+| `ancestors` list memory | O(N²): ~21 MB at 1000 commits, ~82 MB at 2000 (research agent, FalkorDBLite) | OK with 2 h tenant TTL on the 4 GB GCP VM. Person A measures BFS-based checkout in P3 and switches if needed |
 | `[:PARENT*0..200]` on merge diamonds | Exponential (16.7M paths / 2.4 s at 22 diamonds) | Showcase only. Never on the hot path |
 | Property values | Primitives or arrays of primitives only (no maps, no nulls in arrays) | Store structured payloads (e.g. Procedure steps) as JSON strings |
 | Nested pattern comprehensions | Wrong results observed | Use a second query |

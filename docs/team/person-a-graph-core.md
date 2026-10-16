@@ -19,7 +19,7 @@
 - [ ] `cypher/seed_rules.cypher`: `(:Rule {p, strategy})` for each predicate (deadline/owner/budget/decision = needs-review, preference/status = latest-wins, rest = needs-review)
 - [ ] `cypher/merge_commit.cypher`: CAS on the **target** HEAD, `PARENT` to both heads, `ancestors = list.dedup(ha.ancestors + hb.ancestors + [ha.id, hb.id])`, `seq = max + 1`, plus `CALL {}` blocks for chosen facts / removals. **One query.**
 - [ ] `plan_merge` part 1 in `core/merge.py`: three checkouts → dicts by `key` → classify. Table-driven test with 6 combos (one side changed / both same / both different / added on one side / removed on one side / removed vs changed)
-- [ ] Deploy check: run `make test` against the Railway FalkorDB through `railway connect` or a temporary public proxy (gate G1)
+- [ ] Deploy check: run `make test` against the GCP FalkorDB: `gcloud compute ssh falkordb --tunnel-through-iap -- -L 6380:localhost:6379`, then `FALKORDB_URL=redis://:<pw>@localhost:6380 make test` (gate G1)
 
 ## Phase 2 (→ Oct 17 22:00)
 - [ ] `plan_merge` complete: dependents on both sides (`dependents.cypher`), `Rule` → strategy, precedent lookup (`MATCH (pr:Precedent {key_pattern:$p}) RETURN pr ORDER BY pr.count DESC LIMIT 1`)

@@ -1,15 +1,16 @@
 # Person D: API + UI + deploy + video
 
-**You own:** `src/membranch/api/`, `web/`, `Dockerfile`, Railway, the demo video. **Buddy reviewer:** C.
+**You own:** `src/membranch/api/`, `web/`, `Dockerfile`, `deploy/gcp/`, the demo video. **Buddy reviewer:** C.
 **Your output is the 60-second judge flow (M11).** Deploy on day 1, not at the end.
 
 ## Read first
-`docs/research/03-frontend.md` (versions, canvas API, SSE), `docs/research/04-deploy-ci.md` (Railway, Dockerfile), ADR 0004, winplan §8 (judge flow) and §9 (video).
+`docs/research/03-frontend.md` (versions, canvas API, SSE), `docs/research/06-gcp-deploy.md` + `deploy/gcp/README.md` (GCP runbook), ADR 0005, winplan §8 (judge flow) and §9 (video).
 
 ## Phase 0 (→ Oct 16 18:00)
-- [ ] Railway: new project → FalkorDB **Single Instance** template (private, volume) → service from GitHub repo (Dockerfile) → `FALKORDB_URL` = private URL var → `FALKORDB_ARGS` with `TIMEOUT 5000` → public domain
-- [ ] `/api/health` ok on the public URL. Railway healthcheck path `/api/health`. Auto-deploy on push to `main`
-- [ ] Confirm the service doesn't sleep (Railway "serverless" off)
+- [ ] With the lead (who holds the GCP credits): run `deploy/gcp/setup.sh` steps from `deploy/gcp/README.md`
+- [ ] `/api/health` ok on the `run.app` URL (proves Cloud Run → VPC → FalkorDB with password)
+- [ ] SSE check: `curl -N` shows events streaming one by one through Cloud Run (unverified in research)
+- [ ] Push a trivial PR to `main` → `deploy` workflow goes green → new revision live
 
 ## Phase 1 (→ Oct 17 10:00)
 - [ ] API: `POST /api/{tenant}/agents/{agent_id}/messages` streaming SSE events (`token`, `commit`, `error`). Use FastAPI native SSE

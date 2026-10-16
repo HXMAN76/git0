@@ -27,3 +27,4 @@ web/dist/
 
 # graphify output
 graphify-out/
+deploy/gcp/membranch.env

@@ -40,7 +40,7 @@ issue() { # milestone owner extra_labels title body
 issue "P0 Setup" A "" "Team walkthrough of commit_cas + checkout" "15-min call. Everyone can explain CAS + ancestors. See docs/team/person-a-graph-core.md"
 issue "P0 Setup" B "" "Groq + Gemini keys, record real rate limits" "Fill docs/research/02-llm.md with numbers from console.groq.com/settings/limits; confirm Gemini model id."
 issue "P0 Setup" C "" "bench/ skeleton + scenario schema agreed with A and B" "See docs/team/person-c-bench-concurrency.md (scenario format)."
-issue "P0 Setup" D "must-have" "Railway: FalkorDB template + api service, /api/health live" "ADR 0004. Auto-deploy from main, TIMEOUT 5000, no sleep."
+issue "P0 Setup" D "must-have" "GCP: Cloud Run + FalkorDB VM live, auto-deploy from main" "ADR 0005, deploy/gcp/README.md. /api/health on run.app URL, SSE verified with curl -N."
 issue "P1 Foundations" A "must-have" "Seed (:Rule) + merge_commit query (one query, dedup ancestors)" "M4, M15. Test: merge commit visible from both sides, seq rule holds."
 issue "P1 Foundations" A "must-have,contract" "plan_merge part 1: classify keys auto/conflict" "M1. Table test with 6 base/ours/theirs combos."
 issue "P1 Foundations" B "must-have,contract" "llm/client.complete_json: Groq strict, Gemini fallback, cache, LLMError" "M12, M16. ADR 0002."

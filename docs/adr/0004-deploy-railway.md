@@ -1,6 +1,6 @@
 # ADR 0004: Deploy on Railway (api + private FalkorDB)
 
-**Status:** accepted 2026-10-16 · **Owner:** Person D
+**Status:** superseded by [ADR 0005](0005-deploy-gcp.md) (team has GCP credits) · **Owner:** Person D
 
 ## Context
 We need a live URL that stays up during judging. FalkorDB Cloud free tier stops after 1 idle day, has no TLS and deletes after 7 days. Render free sleeps after 15 minutes (~1 minute cold start).
