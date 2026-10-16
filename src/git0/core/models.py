@@ -37,6 +37,7 @@ class Fact(BaseModel):
     key: str
     confidence: float | None = None
     agent_id: str | None = None
+    created_at: int | None = None  # ms; latest-wins compares it
 
 
 class NewProcedure(BaseModel):
@@ -116,12 +117,18 @@ class Conflict(BaseModel):
     dependents_ours: list[Fact] = []
     dependents_theirs: list[Fact] = []
     precedent: str | None = None
+    precedent_choice: str | None = None
+    precedent_count: int = 0
 
 
 class MergeResult(BaseModel):
     source: str
     target: str
     base_commit: str
+    target_head: str
+    source_head: str
+    removals: list[str] = []  # fact ids the merge commit removes for auto-resolved keys
+    unchanged: int = 0  # keys identical on base, target and source
     auto_merged: list[Fact] = []
     conflicts: list[Conflict] = []
     merge_commit: str | None = None  # None while conflicts await review

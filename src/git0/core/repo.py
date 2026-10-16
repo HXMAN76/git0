@@ -93,6 +93,16 @@ class MemoryRepo:
         rows = _rows(await self.graph.ro_query(Q["checkout_commit"], {"commit": commit_id}))
         return [Fact(**r) for r in rows]
 
+    async def dependents_visible(self, fact_id: str, head: str) -> list[Fact]:
+        """Dependents of a fact that are still visible at commit `head`."""
+        rows = _rows(await self.graph.ro_query(Q["dependents_visible"], {"fid": fact_id, "head": head}))
+        return [Fact(**r) for r in rows]
+
+    async def precedent(self, p: str) -> tuple[str, int] | None:
+        """(choice, count) of the most-chosen past resolution for predicate `p`, or None."""
+        rows = _rows(await self.graph.ro_query(Q["precedent_lookup"], {"p": p}))
+        return (rows[0]["choice"], rows[0]["count"]) if rows else None
+
     async def try_merge_commit(
         self,
         target: str,

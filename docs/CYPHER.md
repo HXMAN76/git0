@@ -17,7 +17,7 @@ OPTIONAL MATCH (f)-[:REMOVED_IN]->(r:Commit)
 WITH f, anc, collect(r.id) AS rs
 WHERE none(x IN rs WHERE x IN anc)
 RETURN DISTINCT f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key,
-       f.confidence AS confidence, f.agent_id AS agent_id
+       f.confidence AS confidence, f.agent_id AS agent_id, f.created_at AS created_at
 ORDER BY key
 ```
 
@@ -37,7 +37,7 @@ OPTIONAL MATCH (f)-[:REMOVED_IN]->(r:Commit)
 WITH f, anc, collect(r.id) AS rs
 WHERE none(x IN rs WHERE x IN anc)
 RETURN DISTINCT f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key,
-       f.confidence AS confidence, f.agent_id AS agent_id
+       f.confidence AS confidence, f.agent_id AS agent_id, f.created_at AS created_at
 ORDER BY key
 ```
 
@@ -172,6 +172,26 @@ MATCH (d:Fact)-[:DERIVED_FROM*1..6]->(:Fact {id: $fid})
 RETURN DISTINCT d.id AS id, d.key AS key, d.o AS o, d.agent_id AS agent_id
 ```
 
+## `dependents_visible`
+
+Dependents of fact $fid (DERIVED_FROM up to 6 hops) that are still visible at commit $head.
+plan_merge needs this per side: a conflict card shows what each choice would orphan, and latest-wins
+removes the loser's visible dependents. Same visibility rule as checkout (ancestors list + none()).
+
+```cypher
+MATCH (d:Fact)-[:DERIVED_FROM*1..6]->(:Fact {id: $fid})
+MATCH (h:Commit {id: $head})
+WITH d, h.ancestors + [h.id] AS anc
+MATCH (d)-[:ADDED_IN]->(c:Commit)
+WHERE c.id IN anc
+OPTIONAL MATCH (d)-[:REMOVED_IN]->(r:Commit)
+WITH d, anc, collect(r.id) AS rs
+WHERE none(x IN rs WHERE x IN anc)
+RETURN DISTINCT d.id AS id, d.s AS s, d.p AS p, d.o AS o, d.key AS key,
+       d.confidence AS confidence, d.agent_id AS agent_id, d.created_at AS created_at
+ORDER BY key
+```
+
 ## `fact_lookup`
 
 "Is X in team memory?" (M10). 0 rows = no path from the branch HEAD = "not in memory", never a guess.
@@ -284,6 +304,18 @@ CALL {
   CREATE (cf)-[:RESOLVED_BY]->(pr)
 }
 RETURN n.id AS id, n.seq AS seq
+```
+
+## `precedent_lookup`
+
+Most-chosen past resolution for predicate $p (a (:Precedent) is saved on every human resolution).
+plan_merge shows it on the conflict card as a suggestion; it never decides anything.
+
+```cypher
+MATCH (pr:Precedent {key_pattern: $p})
+RETURN pr.choice AS choice, pr.count AS count
+ORDER BY pr.count DESC
+LIMIT 1
 ```
 
 ## `rules`
