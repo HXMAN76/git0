@@ -1,8 +1,24 @@
-# Production stack on the EC2 host (/opt/membranch). FalkorDB has NO published port: only the api container
-# reaches it over the compose network. The api listens on :80, and the security group allows :80 only from CloudFront.
+# Production stack on the EC2 host (/opt/membranch), shipped by deploy-aws.yml on every deploy.
+# Only Caddy is public (:80 for ACME + redirect, :443 HTTPS). The api binds to localhost for health checks.
+# FalkorDB has NO published port: only the api reaches it over the compose network.
 services:
+  caddy:
+    image: docker.io/library/caddy:2.10
+    restart: always
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,z
+      - caddy-data:/data
+    depends_on:
+      - api
+
   falkordb:
-    image: falkordb/falkordb:v4.22.1
+    image: docker.io/falkordb/falkordb:v4.22.1
     restart: always
     environment:
       REDIS_ARGS: "--requirepass ${FALKORDB_PASSWORD} --appendonly yes"
@@ -22,7 +38,10 @@ services:
       PORT: "8080"
       FALKORDB_URL: redis://:${FALKORDB_PASSWORD}@falkordb:6379
     ports:
-      - "80:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       falkordb:
         condition: service_healthy
+
+volumes:
+  caddy-data:

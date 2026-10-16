@@ -8,8 +8,8 @@
 
 ## Phase 0 (→ Oct 16 18:00)
 - [ ] With whoever has the AWS credentials: run the `deploy/aws/setup.sh` steps from `deploy/aws/README.md`
-- [ ] `/api/health` ok on the `cloudfront.net` URL (proves CloudFront → EC2 → FalkorDB with password)
-- [ ] SSE check: `curl -N` shows events streaming one by one through CloudFront. **Every SSE endpoint sends a `: ping` comment every 15 s** (CloudFront cuts an origin that's silent for 60 s)
+- [ ] `/api/health` ok on the `https://<ip>.sslip.io` URL (proves Caddy TLS → api → FalkorDB with password)
+- [ ] SSE check: `curl -N` shows events streaming one by one through Caddy. **Every SSE endpoint sends a `: ping` comment every 15 s** (needed if CloudFront is added later, and for proxies)
 - [ ] Push a trivial PR to `main` → `deploy` workflow goes green → new revision live
 
 ## Phase 1 (→ Oct 17 10:00)
