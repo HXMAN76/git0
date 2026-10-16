@@ -88,6 +88,27 @@ Files: `src/git0/core/merge.py`, `src/git0/core/models.py`, `tests/core/test_app
    - Call `repo.try_merge_commit(target=plan.target, expected_target=plan.target_head, source_head=plan.source_head, removed, resolutions=[{key, p, side, base_id, ours_id, theirs_id}], msg=msg or f"merge {plan.source} into {plan.target}", agent_id)`. If it returns None raise `CommitConflictError("target moved since plan; re-plan")`. Do not retry silently: the plan is stale.
 3. Tests: full judge story: main base `launch|deadline=fri`; branch `planner` changes it to `mon`; branch `scheduler` (from same base) adds `venue|status=booked_fri` DERIVED_FROM the fri fact; merge `scheduler` into main first (auto, no conflict), then plan merge `planner` into main: one conflict on `launch|deadline` with the venue fact in `dependents_ours`; apply choosing planner's `mon` fact: main shows `mon`, venue fact is removed, `invalidated` == [venue fact], a `Precedent {key_pattern:'deadline', choice:'source', count:1}` exists, and a second plan on a similar conflict reports `precedent_count == 1`. Also: missing choice raises; stale plan (target committed after planning) raises `CommitConflictError`; `__delete__` removes both sides.
 
+## Task 4b: Dependency conflicts, the hero case (#11)
+
+Plan amendment (ledger ruling): value-only comparison never flags the demo story. Scheduler derives tasks from the BASE `friday` fact, Planner moves the deadline to `monday` (a one-sided change), and the stale tasks would auto-merge silently. "Merge by meaning" must flag it.
+
+Files: `src/git0/core/merge.py`, `src/git0/core/models.py`, `cypher/merge_commit.cypher`, `src/git0/core/repo.py`, new `tests/core/test_dependency_conflicts.py`, `tests/core/test_apply_merge.py`.
+
+1. Models (additive): `Conflict.reason: Literal["value", "dependency"] = "value"`; `MergeApplied.restored: list[str] = []` (ids of restored copy facts).
+2. `merge_commit.cypher`: add a `$facts` unit `CALL {}` block with the same shape as the facts block in `commit_cas.cypher` (`CREATE (:Fact {id, s, p, o, key: s+'|'+p, confidence, agent_id: n.agent_id, created_at: timestamp()})-[:ADDED_IN]->(n)`). `MemoryRepo.try_merge_commit` gains `facts: list[NewFact] | None = None` (send `[]` when None); existing callers keep working.
+3. `plan_merge`: for each key that has a base fact and where exactly one side X changed the value while the other side Y still holds the base value (fact `y_fact` from Y's view):
+   - `stale` = facts in `dependents_visible(y_fact.id, Y_head)` whose ids are NOT in `dependents_visible(base_fact.id, base_commit)` (dependents Y gained since the merge base).
+   - `stale` empty: behaviour unchanged.
+   - strategy `needs-review`: append `Conflict(reason="dependency", key, base=base_fact, ours=<target-side fact>, theirs=<source-side fact or None if deleted>, strategy=NEEDS_REVIEW, dependents on Y's side = stale, dependents on X's side = dependents_visible(x_fact.id, X_head) if x_fact else [], precedent fields as for value conflicts)`. Do not add it to `auto_merged`.
+   - strategy `latest-wins`: X's change wins automatically; add stale ids to `removals`; x_fact to `auto_merged`.
+4. `apply_merge`: when the chosen winner of a `dependency` conflict is Y's base-valued fact (X's commits removed it, so the ancestor union hides it), restore it: pass a `NewFact` copy (new id via `new_id()`, same s/p/o/confidence) in `facts` to `try_merge_commit` and list the copy id in `MergeApplied.restored`. Choosing X's fact: Y-side stale dependents are removed and listed in `invalidated`. Precedent side naming unchanged (`target`/`source`/`delete`). The winner-survives ruling still holds (the restored copy is the survivor).
+5. Tests (`tests/core/test_dependency_conflicts.py`), the ORIGINAL story: main base `launch|deadline=fri`; branches `planner` and `scheduler` from main; scheduler adds `venue|status=booked_fri` DERIVED_FROM the fri fact; plan+apply scheduler into main (no conflicts); planner sets `mon`; plan planner into main gives exactly 1 conflict with `reason == "dependency"`, `ours.o == "fri"`, `theirs.o == "mon"`, `dependents_ours == [venue]`.
+   (a) choose theirs: main shows `mon`, venue hidden and in `invalidated`, Precedent `{deadline, source}` count 1, Conflict node `side == "source"` with SIDE_A/SIDE_B/BASE edges pointing at ours/theirs/base ids, merge commit `kind == "merge"`.
+   (b) choose ours: main shows `fri` from a restored copy (id in `restored`, different from the base fact id), `mon` hidden, venue still visible, `invalidated == []`.
+   (c) same story on predicate `status` (latest-wins): no conflict; the stale dependent is in `removals`.
+   (d) a dependent that existed at the merge base (derived before branching) does not create a dependency conflict.
+   Also add to `tests/core/test_apply_merge.py` assertions on the Conflict node side and SIDE_A/SIDE_B/BASE ids for one value conflict (Task 4 minor).
+
 ## Task 5: Revert with dependency cascade (#11)
 
 Files: new `cypher/commit_changes.cypher`, `src/git0/core/repo.py` (or new `src/git0/core/revert.py`), `src/git0/core/models.py`, `tests/core/test_revert.py`.
