@@ -213,6 +213,13 @@ github() {
 budget() {
   : "${ALERT_EMAIL:?}" "${BUDGET_USD:=30}"
   notif() { echo "{\"Notification\":{\"NotificationType\":\"$1\",\"ComparisonOperator\":\"GREATER_THAN\",\"Threshold\":$2,\"ThresholdType\":\"PERCENTAGE\"},\"Subscribers\":[{\"SubscriptionType\":\"EMAIL\",\"Address\":\"$ALERT_EMAIL\"}]}"; }
+  if aws budgets describe-budget --account-id "$ACCOUNT" --budget-name membranch >/dev/null 2>&1; then
+    echo "budget membranch already exists:"
+    aws budgets describe-budget --account-id "$ACCOUNT" --budget-name membranch \
+      --query 'Budget.[BudgetLimit.Amount,BudgetLimit.Unit,TimeUnit,CalculatedSpend.ActualSpend.Amount]' --output text
+    echo "(to change it: delete it in the Billing console or 'aws budgets delete-budget', then re-run)"
+    return 0
+  fi
   aws budgets create-budget --account-id "$ACCOUNT" \
     --budget "{\"BudgetName\":\"membranch\",\"BudgetLimit\":{\"Amount\":\"$BUDGET_USD\",\"Unit\":\"USD\"},\"TimeUnit\":\"MONTHLY\",\"BudgetType\":\"COST\"}" \
     --notifications-with-subscribers "[$(notif ACTUAL 50),$(notif ACTUAL 80),$(notif FORECASTED 100)]"
