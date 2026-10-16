@@ -93,6 +93,18 @@ class MemoryRepo:
         rows = _rows(await self.graph.ro_query(Q["checkout_commit"], {"commit": commit_id}))
         return [Fact(**r) for r in rows]
 
+    async def commit_changes(self, commit_id: str) -> tuple[list[Fact], list[Fact]]:
+        """(added, removed) facts of one commit, not filtered by visibility."""
+        rows = _rows(await self.graph.ro_query(Q["commit_changes"], {"commit": commit_id}))
+        facts = {"added": [], "removed": []}
+        for r in rows:
+            facts[r.pop("change")].append(Fact(**r))
+        return facts["added"], facts["removed"]
+
+    async def ancestors(self, commit_id: str) -> list[str]:
+        rows = _rows(await self.graph.ro_query(Q["commit_ancestors"], {"commit": commit_id}))
+        return rows[0]["ancestors"] if rows else []
+
     async def dependents_visible(self, fact_id: str, head: str) -> list[Fact]:
         """Dependents of a fact that are still visible at commit `head`."""
         rows = _rows(await self.graph.ro_query(Q["dependents_visible"], {"fid": fact_id, "head": head}))

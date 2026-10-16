@@ -77,6 +77,16 @@ RETURN DISTINCT f.id AS id, f.key AS key, f.o AS o
 ORDER BY key
 ```
 
+## `commit_ancestors`
+
+The immutable ancestor id list of commit $commit (empty for the root). revert uses it to check that the
+commit being reverted is actually on the branch history, without walking PARENT edges.
+
+```cypher
+MATCH (h:Commit {id: $commit})
+RETURN h.ancestors AS ancestors
+```
+
 ## `commit_cas`
 
 Atomic compare-and-set commit (M15: one query = one transaction).
@@ -148,6 +158,20 @@ CALL {
   CREATE (child)-[:DERIVED_FROM]->(parent)
 }
 RETURN n.id AS id, n.seq AS seq
+```
+
+## `commit_changes`
+
+What one commit changed: facts ADDED_IN and facts REMOVED_IN commit $commit, tagged by change type.
+revert needs both halves: the added facts get removed, the removed ones (e.g. the old value a new fact
+replaced) get restored. Not visibility-filtered: the caller intersects with the branch checkout.
+
+```cypher
+MATCH (f:Fact)-[:ADDED_IN]->(:Commit {id: $commit})
+RETURN 'added' AS change, f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key, f.confidence AS confidence
+UNION ALL
+MATCH (f:Fact)-[:REMOVED_IN]->(:Commit {id: $commit})
+RETURN 'removed' AS change, f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key, f.confidence AS confidence
 ```
 
 ## `create_branch`

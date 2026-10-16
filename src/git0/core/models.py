@@ -147,3 +147,14 @@ class MergeApplied(BaseModel):
     removed: list[str]
     invalidated: list[Fact] = []
     restored: list[str] = []  # ids of copy facts re-created for a dependency-conflict winner the union hid
+
+
+class RevertResult(BaseModel):
+    """What revert did: `reverted` = the commit's own facts removed, `cascaded` = their dependents removed,
+    `restored` = ids of fresh copies of the values the commit had replaced."""
+
+    revert_commit: str
+    reverted: list[str]
+    cascaded: list[str]
+    restored: list[str]
+    unchanged: int
