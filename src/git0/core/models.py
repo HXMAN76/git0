@@ -150,6 +150,7 @@ class MergeResult(BaseModel):
     source_head: str
     removals: list[str] = []  # fact ids the merge commit removes for auto-resolved keys
     unchanged: int = 0  # keys identical on base, target and source
+    invalidated_auto: list[Fact] = []  # dependents the latest-wins cascade removes (also in `removals`)
     auto_merged: list[Fact] = []
     conflicts: list[Conflict] = []
     merge_commit: str | None = None  # None while conflicts await review

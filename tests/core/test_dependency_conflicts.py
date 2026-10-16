@@ -104,8 +104,11 @@ async def test_latest_wins_predicate_removes_stale_dependent_without_asking(repo
     assert plan.conflicts == []
     assert venue.id in plan.removals
     assert [f.id for f in plan.auto_merged] == [moved.id]
-    await apply_merge(repo, plan, {})
+    assert [f.id for f in plan.invalidated_auto] == [venue.id]
+    done = await apply_merge(repo, plan, {})
     assert {f.key: f.o for f in await repo.checkout("main")} == {"launch|status": "paused"}
+    # the Arbiter re-derives only invalidated facts, so the silent cascade must be reported
+    assert [f.id for f in done.invalidated] == [venue.id] and venue.id in done.removed
 
 
 async def test_dependent_present_at_merge_base_is_not_a_dependency_conflict(repo):

@@ -111,6 +111,7 @@ async def _dependency(repo, plan, rules, key, b, t, s, source_changed: bool) -> 
         return False
     if rules.get(b.p, MergeStrategy.NEEDS_REVIEW) == MergeStrategy.LATEST_WINS:
         plan.removals += [d.id for d in stale]
+        plan.invalidated_auto += stale
         return False
     plan.conflicts.append(
         await _conflict(
@@ -140,7 +141,9 @@ async def _latest_wins(repo: MemoryRepo, plan: MergeResult, t: Fact | None, s: F
     plan.auto_merged.append(winner)
     if loser:
         plan.removals.append(loser.id)
-        plan.removals += [d.id for d in await repo.dependents_visible(loser.id, loser_head)]
+        deps = await repo.dependents_visible(loser.id, loser_head)
+        plan.removals += [d.id for d in deps]
+        plan.invalidated_auto += deps
 
 
 async def _conflict(
@@ -183,7 +186,8 @@ async def apply_merge(
 
     removed = list(plan.removals)
     winners: set[str] = set()
-    dependents: dict[str, Fact] = {}
+    # Dependents removed by the latest-wins cascade count too: the Arbiter re-derives every invalidated fact.
+    dependents: dict[str, Fact] = {f.id: f for f in plan.invalidated_auto}
     resolutions = []
     restore: list[NewFact] = []
     for key, c in by_key.items():

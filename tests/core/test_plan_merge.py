@@ -86,6 +86,7 @@ async def test_latest_wins_removes_loser_and_its_dependents(repo):
     assert r.conflicts == []
     assert [f.id for f in r.auto_merged] == [theirs.id]  # source is newer
     assert sorted(r.removals) == sorted([mine.id, dep.id])
+    assert [f.id for f in r.invalidated_auto] == [dep.id]  # the cascade, not the loser itself
 
 
 async def test_latest_wins_tie_goes_to_source(repo):
