@@ -6,6 +6,7 @@
 #   cp deploy/aws/membranch.env.example deploy/aws/membranch.env   # fill in
 #   deploy/aws/setup.sh infra         # ECR, SSM params, IAM, security group, EC2 + EIP, [CloudFront], GitHub OIDC role
 #   deploy/aws/setup.sh llm-secrets   # store GROQ/GEMINI keys as SSM SecureStrings (hidden input)
+#   deploy/aws/setup.sh oidc          # (re)write the deploy role trust policy only (e.g. after a repo rename)
 #   deploy/aws/setup.sh github        # set repo variables + trigger the first deploy (deploy-aws.yml)
 #   deploy/aws/setup.sh budget        # monthly cost budget with email alerts at 50/80/100 %
 #   deploy/aws/setup.sh status        # URL, instance, SSM agent, last deploy
@@ -153,15 +154,7 @@ JSON
   aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" >/dev/null 2>&1 \
     || aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com \
          --client-id-list sts.amazonaws.com >/dev/null
-  TRUST="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",
-    \"Principal\":{\"Federated\":\"$OIDC_ARN\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",
-    \"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",
-    \"token.actions.githubusercontent.com:sub\":\"repo:$GITHUB_REPO:ref:refs/heads/main\"}}}]}"
-  if aws iam get-role --role-name $DEPLOY_ROLE >/dev/null 2>&1; then
-    aws iam update-assume-role-policy --role-name $DEPLOY_ROLE --policy-document "$TRUST"
-  else
-    aws iam create-role --role-name $DEPLOY_ROLE --assume-role-policy-document "$TRUST" >/dev/null
-  fi
+  deploy_role_trust
   aws iam put-role-policy --role-name $DEPLOY_ROLE --policy-name membranch-deploy --policy-document "{
     \"Version\":\"2012-10-17\",\"Statement\":[
      {\"Effect\":\"Allow\",\"Action\":\"ecr:GetAuthorizationToken\",\"Resource\":\"*\"},
@@ -176,6 +169,24 @@ JSON
 
   echo; echo "infra ready. URL (live after the first deploy): $PUBLIC_URL"
   echo "next: $0 llm-secrets && $0 github"
+}
+
+# Trust only refs/heads/main of this repo. Newer repos use GitHub's immutable subject
+# ("repo:OWNER@<owner_id>/REPO@<repo_id>:ref:..."), older ones "repo:OWNER/REPO:ref:...". Trust both.
+deploy_role_trust() {
+  local oidc_arn="arn:aws:iam::$ACCOUNT:oidc-provider/token.actions.githubusercontent.com" prefix trust
+  prefix=$(gh api "repos/$GITHUB_REPO/actions/oidc/customization/sub" --jq '.sub_claim_prefix // empty' 2>/dev/null || true)
+  [[ -n "$prefix" ]] || prefix="repo:$GITHUB_REPO"
+  trust="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",
+    \"Principal\":{\"Federated\":\"$oidc_arn\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",
+    \"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",
+    \"token.actions.githubusercontent.com:sub\":[\"$prefix:ref:refs/heads/main\",\"repo:$GITHUB_REPO:ref:refs/heads/main\"]}}}]}"
+  if aws iam get-role --role-name $DEPLOY_ROLE >/dev/null 2>&1; then
+    aws iam update-assume-role-policy --role-name $DEPLOY_ROLE --policy-document "$trust"
+  else
+    aws iam create-role --role-name $DEPLOY_ROLE --assume-role-policy-document "$trust" >/dev/null
+  fi
+  echo "deploy role trusts: $prefix:ref:refs/heads/main (+ legacy repo:$GITHUB_REPO form)"
 }
 
 llm_secrets() {
@@ -238,9 +249,10 @@ EOF
 case "${1:-}" in
   infra) infra ;;
   llm-secrets) llm_secrets ;;
+  oidc) deploy_role_trust ;;
   github) github ;;
   budget) budget ;;
   status) status ;;
   teardown) teardown ;;
-  *) sed -n '2,11p' "$0"; exit 1 ;;
+  *) sed -n '2,13p' "$0"; exit 1 ;;
 esac
