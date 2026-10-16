@@ -1,0 +1,12 @@
+# Replace @handles with the teammates' GitHub usernames (see docs/team/README.md).
+/cypher/                 @PERSON_A
+/src/membranch/core/     @PERSON_A
+/src/membranch/llm/      @PERSON_B
+/src/membranch/agents/   @PERSON_B
+/src/membranch/mcp/      @PERSON_B
+/bench/                  @PERSON_C
+/scripts/                @PERSON_C
+/src/membranch/api/      @PERSON_D
+/web/                    @PERSON_D
+/Dockerfile              @PERSON_D
+/.github/                @HXMAN76

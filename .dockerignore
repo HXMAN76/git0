@@ -1,0 +1,8 @@
+.venv
+.git
+**/node_modules
+web/dist
+.cache
+.env
+bench/results
+docs

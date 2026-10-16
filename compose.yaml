@@ -1,0 +1,32 @@
+# Local dev stack. Works with `docker compose` and `podman compose`.
+services:
+  falkordb:
+    image: docker.io/falkordb/falkordb:v4.22.1
+    ports:
+      - "6379:6379"   # Redis protocol / GRAPH.QUERY
+      - "3000:3000"   # FalkorDB Browser UI
+    environment:
+      # default TIMEOUT is 1000 ms; raise for the merge/benchmark queries
+      FALKORDB_ARGS: "MAX_QUEUED_QUERIES 100 TIMEOUT 5000 RESULTSET_SIZE 10000"
+    volumes:
+      - falkordb-data:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      FALKORDB_URL: redis://falkordb:6379
+    ports:
+      - "8000:8000"
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    profiles: ["full"]
+
+volumes:
+  falkordb-data:
