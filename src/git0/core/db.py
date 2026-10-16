@@ -5,7 +5,7 @@ import re
 from falkordb.asyncio import FalkorDB
 from falkordb.asyncio.graph import AsyncGraph
 
-from membranch.config import get_settings
+from git0.config import get_settings
 
 _TENANT_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 _db: FalkorDB | None = None
@@ -42,7 +42,8 @@ async def ensure_schema(graph: AsyncGraph) -> None:
         ("Session", "id"),
         ("Procedure", "id"),
     ]
-    existing = {(row[0], tuple(row[1])) for row in (await graph.list_indices()).result_set}
+    # list_indices groups properties per label (e.g. Fact -> ["id", "key"]), so flatten per property
+    existing = {(row[0], prop) for row in (await graph.list_indices()).result_set for prop in row[1]}
     for label, prop in wanted:
-        if (label, (prop,)) not in existing:
+        if (label, prop) not in existing:
             await graph.create_node_range_index(label, prop)

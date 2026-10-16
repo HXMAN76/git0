@@ -2,6 +2,8 @@
 
 > **Strategy doc (human reading: pitch, judge flow, video script).** Where it disagrees with the code, `docs/ARCHITECTURE.md` or an ADR, those win: e.g. no LiteLLM (ADR 0002), ancestors-list checkout (ADR 0001), AWS + Caddy deploy (ADR 0006).
 
+> Working name in this doc: Membranch. The project is now called Git0.
+
 Builds on [prior-art.md](prior-art.md) (prior art). Working name **Membranch** (check name is free before repo).
 
 ## 1. Thesis (one line)

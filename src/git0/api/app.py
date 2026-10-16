@@ -7,11 +7,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from membranch import __version__
-from membranch.config import get_settings
-from membranch.core.db import close_db, ensure_schema, get_db, tenant_graph
-from membranch.core.models import Commit, CommitRequest, Fact
-from membranch.core.repo import MemoryRepo
+from git0 import __version__
+from git0.config import get_settings
+from git0.core.db import close_db, ensure_schema, get_db, tenant_graph
+from git0.core.models import Commit, CommitRequest, Fact
+from git0.core.repo import MemoryRepo
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 
@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
-app = FastAPI(title="Membranch", version=__version__, lifespan=lifespan)
+app = FastAPI(title="Git0", version=__version__, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,

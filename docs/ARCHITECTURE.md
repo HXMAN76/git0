@@ -12,7 +12,7 @@ Source plan: `git-for-memory-winplan.md` (2026-10-16). This file covers what we 
              └──────────────┬──────────────────────────────────────▲─────────┘
                     REST (openapi-fetch)                      SSE (agent stream, scorecard)
              ┌──────────────▼──────────────────────────────────────┴─────────┐
-             │ src/membranch/api  FastAPI (Person D)   /api/{tenant}/...       │
+             │ src/git0/api  FastAPI (Person D)   /api/{tenant}/...       │
              ├─────────────────────────────┬──────────────────────────────────┤
              │ agents/ + llm/ (Person B)   │ mcp/ (Person B, should-have)      │
              │ Planner, Scheduler, Notes,  │ checkout / commit_facts / log /   │
@@ -99,12 +99,12 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 
 | Contract | Owner | Consumers | File |
 |-|-|-|-|
-| Pydantic models (`Fact`, `CommitRequest`, `Conflict`, `MergeResult`) | A | B, C, D | `src/membranch/core/models.py` |
-| `MemoryRepo` methods | A | B, C, D | `src/membranch/core/repo.py` |
-| `plan_merge` / `apply_merge` | A | B (Arbiter), C, D | `src/membranch/core/merge.py` |
-| `complete_json` + `LLMError` | B | B (agents), C (cached bench) | `src/membranch/llm/client.py` |
-| `AgentSpec`, `AgentReply`, `step()` | B | D | `src/membranch/agents/base.py` |
-| REST + SSE endpoints (OpenAPI) | D | web | `src/membranch/api/app.py` → `pnpm gen:api` |
+| Pydantic models (`Fact`, `CommitRequest`, `Conflict`, `MergeResult`) | A | B, C, D | `src/git0/core/models.py` |
+| `MemoryRepo` methods | A | B, C, D | `src/git0/core/repo.py` |
+| `plan_merge` / `apply_merge` | A | B (Arbiter), C, D | `src/git0/core/merge.py` |
+| `complete_json` + `LLMError` | B | B (agents), C (cached bench) | `src/git0/llm/client.py` |
+| `AgentSpec`, `AgentReply`, `step()` | B | D | `src/git0/agents/base.py` |
+| REST + SSE endpoints (OpenAPI) | D | web | `src/git0/api/app.py` → `pnpm gen:api` |
 | Scenario YAML schema + result JSON | C | README, video | `bench/` |
 
 ### REST endpoints (contract between B and D; implement in `api/app.py`)

@@ -1,6 +1,6 @@
 """Graph core (Person A). Everything here talks to FalkorDB; nothing here calls an LLM."""
 
-from membranch.core.models import (
+from git0.core.models import (
     Commit,
     CommitRequest,
     Conflict,
@@ -11,7 +11,7 @@ from membranch.core.models import (
     NewProcedure,
     Procedure,
 )
-from membranch.core.repo import CommitConflictError, MemoryRepo
+from git0.core.repo import CommitConflictError, MemoryRepo
 
 __all__ = [
     "Commit",

@@ -16,8 +16,8 @@ Contract (agents, API and bench already code against this):
         `choices` maps conflict key -> chosen fact id. Saves a (:Precedent) per resolved key.
 """
 
-from membranch.core.models import MergeResult
-from membranch.core.repo import MemoryRepo
+from git0.core.models import MergeResult
+from git0.core.repo import MemoryRepo
 
 
 async def plan_merge(repo: MemoryRepo, source: str, target: str) -> MergeResult:

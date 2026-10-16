@@ -21,6 +21,7 @@ A teammate's friend offers an AWS account, so we use it instead of GCP. Research
 - **SSE heartbeat:** keep the `: ping` comment every 15 s (Person B/D). Caddy doesn't need it, but CloudFront would (60 s max gap between bytes), and so do most corporate proxies.
 - Single host, no replica. Deploys restart the api container (a few seconds of downtime). FalkorDB keeps running across deploys. Acceptable for a demo.
 - `deploy/gcp/` (ADR 0005) and Railway (ADR 0004) remain as fallbacks with the same Dockerfile.
+- Cloud resource names keep the old working name `membranch` (renaming them would recreate live infrastructure).
 
 ## Status
 - 2026-10-16: live at https://15-252-11-70.sslip.io (Let's Encrypt cert, t3.small, ap-south-1). The first deploy failed `AssumeRoleWithWebIdentity` because of the immutable OIDC subject. Fixed by `setup.sh oidc`.

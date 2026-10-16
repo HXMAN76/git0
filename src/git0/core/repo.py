@@ -5,8 +5,8 @@ import uuid
 
 from falkordb.asyncio.graph import AsyncGraph
 
-from membranch.core.models import Commit, CommitRequest, Fact, Procedure
-from membranch.core.queries import Q
+from git0.core.models import Commit, CommitRequest, Fact, Procedure
+from git0.core.queries import Q
 
 
 class CommitConflictError(RuntimeError):

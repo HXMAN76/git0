@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from membranch.api.app import app
+from git0.api.app import app
 
 
 def test_health_and_tenant_roundtrip():

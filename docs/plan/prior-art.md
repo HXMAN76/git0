@@ -2,6 +2,8 @@
 
 > **Strategy doc (human reading: pitch, judge flow, video script).** Where it disagrees with the code, `docs/ARCHITECTURE.md` or an ADR, those win: e.g. no LiteLLM (ADR 0002), ancestors-list checkout (ADR 0001), AWS + Caddy deploy (ADR 0006).
 
+> Working name in this doc: Membranch. The project is now called Git0.
+
 ## Verdict
 **Yes, but only graph-native.** File/blob "git for memory" is crowded (6+ tools). Nobody does git semantics *on a graph*: semantic merge conflicts, dependency-aware revert, blame through derivation. FalkorDB makes that load-bearing. It also absorbs the "Undo" idea (revert = undo cascade, purge = provable forget). Feasible in 2.5 days with 4 people.
 

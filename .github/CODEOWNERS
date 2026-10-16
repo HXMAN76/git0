@@ -3,16 +3,16 @@
 # A = Hari Heman V K (@HXMAN76) · B = Roshan T (@Git-Roshan09) · C = Raghav N (@Rag-795) · D = Sai Nivedh (@SaiNivedh26)
 *                        @HXMAN76
 /cypher/                 @HXMAN76 @Git-Roshan09
-/src/membranch/core/     @HXMAN76 @Git-Roshan09
+/src/git0/core/     @HXMAN76 @Git-Roshan09
 /tests/core/             @HXMAN76 @Git-Roshan09
-/src/membranch/llm/      @Git-Roshan09 @HXMAN76
-/src/membranch/agents/   @Git-Roshan09 @HXMAN76
-/src/membranch/mcp/      @Git-Roshan09 @HXMAN76
+/src/git0/llm/      @Git-Roshan09 @HXMAN76
+/src/git0/agents/   @Git-Roshan09 @HXMAN76
+/src/git0/mcp/      @Git-Roshan09 @HXMAN76
 /tests/llm/              @Git-Roshan09 @HXMAN76
 /tests/agents/           @Git-Roshan09 @HXMAN76
 /bench/                  @Rag-795 @SaiNivedh26
 /scripts/                @Rag-795 @SaiNivedh26
-/src/membranch/api/      @SaiNivedh26 @Rag-795
+/src/git0/api/      @SaiNivedh26 @Rag-795
 /tests/api/              @SaiNivedh26 @Rag-795
 /web/                    @SaiNivedh26 @Rag-795
 /Dockerfile              @SaiNivedh26 @Rag-795

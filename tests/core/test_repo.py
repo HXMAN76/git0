@@ -2,9 +2,9 @@ import asyncio
 
 import pytest
 
-from membranch.core.models import CommitRequest, Derivation, Episode, NewFact, NewProcedure
-from membranch.core.queries import Q
-from membranch.core.repo import new_id
+from git0.core.models import CommitRequest, Derivation, Episode, NewFact, NewProcedure
+from git0.core.queries import Q
+from git0.core.repo import new_id
 
 
 def fact(s, p, o, fid=None):
@@ -165,3 +165,11 @@ async def test_one_visible_value_per_key(repo):
         CommitRequest(branch="main", agent_id="a", msg="mon", facts=[fact("launch", "deadline", "mon")])
     )
     assert [f.o for f in await repo.checkout("main")] == ["mon"]
+
+
+async def test_ensure_schema_is_idempotent(repo):
+    """Regression: list_indices groups properties per label, so Fact(id, key) must not be re-created."""
+    from git0.core.db import ensure_schema
+
+    await ensure_schema(repo.graph)
+    await ensure_schema(repo.graph)
