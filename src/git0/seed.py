@@ -9,7 +9,6 @@ from git0.core.repo import MemoryRepo
 
 BRANCHES = ["main", "planner", "scheduler"]
 LAUNCH_DEADLINE = "seed-launch-deadline"
-VENUE_STATUS = "seed-venue-status"
 KICKOFF = "Kickoff: launch plan"
 SCHEDULE = "Book the venue and send invites for Friday"
 
@@ -75,7 +74,7 @@ async def seed(repo: MemoryRepo) -> dict:
     after a partial failure finishes the room instead of duplicating or erroring on it."""
     await repo.init()
     created = False
-    if LAUNCH_DEADLINE not in await _visible_ids(repo, "main"):
+    if not await _seeded(repo, "main", "planner"):
         await seed_main(repo)
         created = True
     for name in ("planner", "scheduler"):
@@ -85,7 +84,7 @@ async def seed(repo: MemoryRepo) -> dict:
             await repo.create_branch(name, from_branch="main")
             created = True
     # Written last: the venue fact only exists once the whole scheduler commit landed.
-    if VENUE_STATUS not in await _visible_ids(repo, "scheduler"):
+    if not await _seeded(repo, "scheduler", "scheduler"):
         await _seed_scheduler(repo)
         created = True
     return {
@@ -96,8 +95,10 @@ async def seed(repo: MemoryRepo) -> dict:
     }
 
 
-async def _visible_ids(repo: MemoryRepo, branch: str) -> set[str]:
-    return {f.id for f in await repo.checkout(branch)}
+async def _seeded(repo: MemoryRepo, branch: str, agent_id: str) -> bool:
+    """Has this seed step ever landed? Judged by history, not by what is visible now: the demo itself removes
+    seed facts (e.g. resolving the deadline to Monday), and re-running a step would duplicate fixed ids."""
+    return any(c.kind == "seed" and c.agent_id == agent_id for c in await repo.log(branch, limit=100_000))
 
 
 async def seed_main(repo: MemoryRepo) -> None:
