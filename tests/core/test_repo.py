@@ -216,3 +216,43 @@ async def test_same_key_on_branch_does_not_hide_main_value(repo):
     )
     assert [f.o for f in await repo.checkout("main")] == ["fri"]
     assert [f.o for f in await repo.checkout("b")] == ["mon"]
+
+
+async def _removed_in_count(repo, fact_id):
+    res = await repo.graph.ro_query(
+        "MATCH (:Fact {id: $id})-[r:REMOVED_IN]->(:Commit) RETURN count(r)", {"id": fact_id}
+    )
+    return res.result_set[0][0]
+
+
+async def test_fact_added_on_main_after_branch_point_is_not_removed_by_branch(repo):
+    """Exercises the `c.id IN n.ancestors` filter: tue is not visible at b's parent, so b leaves it alone."""
+    await repo.commit(
+        CommitRequest(branch="main", agent_id="a", msg="fri", facts=[fact("launch", "deadline", "fri")])
+    )
+    await repo.create_branch("b")
+    tue = fact("launch", "deadline", "tue")
+    await repo.commit(CommitRequest(branch="main", agent_id="a", msg="tue", facts=[tue]))
+    await repo.commit(
+        CommitRequest(branch="b", agent_id="a", msg="mon", facts=[fact("launch", "deadline", "mon")])
+    )
+    assert await _removed_in_count(repo, tue.id) == 0
+    assert [f.o for f in await repo.checkout("main")] == ["tue"]
+    assert [f.o for f in await repo.checkout("b")] == ["mon"]
+
+
+async def test_sibling_branches_each_remove_the_shared_base_fact(repo):
+    base = fact("launch", "deadline", "fri")
+    await repo.commit(CommitRequest(branch="main", agent_id="a", msg="fri", facts=[base]))
+    await repo.create_branch("a")
+    await repo.create_branch("b")
+    await repo.commit(
+        CommitRequest(branch="a", agent_id="a", msg="mon", facts=[fact("launch", "deadline", "mon")])
+    )
+    await repo.commit(
+        CommitRequest(branch="b", agent_id="b", msg="wed", facts=[fact("launch", "deadline", "wed")])
+    )
+    assert await _removed_in_count(repo, base.id) == 2  # one edge per branch commit
+    assert [f.o for f in await repo.checkout("a")] == ["mon"]
+    assert [f.o for f in await repo.checkout("b")] == ["wed"]
+    assert [f.o for f in await repo.checkout("main")] == ["fri"]
