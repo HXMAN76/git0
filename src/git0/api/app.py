@@ -139,6 +139,10 @@ class MergeRequest(BaseModel):
 class ResolveRequest(MergeRequest):
     choices: dict[str, str]  # conflict key -> chosen fact id (or DELETE)
     agent_id: str = "human"
+    # The heads the human previewed (MergeResult.target_head/source_head). When sent, a branch that moved
+    # since then is a 409 instead of silently merging commits nobody looked at.
+    target_head: str | None = None
+    source_head: str | None = None
 
 
 class RevertRequest(BaseModel):
@@ -161,6 +165,9 @@ async def merge_resolve(tenant: str, req: ResolveRequest) -> MergeApplied:
     try:
         # Re-plan so choices are checked against the heads as they are now, not a stale preview.
         plan = await plan_merge(repo, req.source, req.target)
+        previewed = (req.target_head or plan.target_head, req.source_head or plan.source_head)
+        if previewed != (plan.target_head, plan.source_head):
+            raise HTTPException(409, "branch moved since preview; preview again")
         return await apply_merge(repo, plan, req.choices, req.agent_id)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc

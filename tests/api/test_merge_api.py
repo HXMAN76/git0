@@ -49,13 +49,28 @@ def test_merge_preview_resolve_revert_and_procedures():
             )
             assert missing.status_code == 400
 
+            heads = {"target_head": plan["target_head"], "source_head": plan["source_head"]}
+            choices = {conflict["key"]: conflict["theirs"]["id"]}
+
+            # The source branch moves after the preview: resolving the stale picture is refused.
+            late = {
+                "branch": "planner",
+                "agent_id": "planner",
+                "msg": "late edit",
+                "facts": [{"id": "planner-late", "s": "late", "p": "owner", "o": "x"}],
+            }
+            assert client.post(f"{t}/commits", json=late).status_code == 200
+            stale = client.post(
+                f"{t}/merge/resolve",
+                json={"source": "planner", "target": "main", "choices": choices, **heads},
+            )
+            assert stale.status_code == 409 and "preview again" in stale.json()["detail"]
+
+            plan = client.post(f"{t}/merge/preview", json={"source": "planner", "target": "main"}).json()
+            heads = {"target_head": plan["target_head"], "source_head": plan["source_head"]}
             applied = client.post(
                 f"{t}/merge/resolve",
-                json={
-                    "source": "planner",
-                    "target": "main",
-                    "choices": {conflict["key"]: conflict["theirs"]["id"]},
-                },
+                json={"source": "planner", "target": "main", "choices": choices, **heads},
             ).json()
             assert len(applied["invalidated"]) == 3
             assert client.get(f"{t}/scorecard").json()["conflicts_resolved"] == 1
@@ -72,6 +87,30 @@ def test_merge_preview_resolve_revert_and_procedures():
             assert procs.status_code == 200 and isinstance(procs.json(), list)
     finally:
         _drop("team_ci_merge")
+
+
+def test_resolve_with_previewed_heads_is_409_when_target_moved():
+    t = "/api/ci_merge_moved"
+    body = {"source": "scheduler", "target": "main", "choices": {}}
+    try:
+        with TestClient(app) as client:
+            client.post(f"{t}/seed")
+            plan = client.post(f"{t}/merge/preview", json=body).json()
+            heads = {"target_head": plan["target_head"], "source_head": plan["source_head"]}
+            note = {
+                "branch": "main",
+                "agent_id": "planner",
+                "msg": "main moves",
+                "facts": [{"id": "main-late", "s": "late", "p": "owner", "o": "x"}],
+            }
+            assert client.post(f"{t}/commits", json=note).status_code == 200
+
+            stale = client.post(f"{t}/merge/resolve", json={**body, **heads})
+            fresh = client.post(f"{t}/merge/resolve", json=body)  # no heads sent: old behaviour
+    finally:
+        _drop("team_ci_merge_moved")
+    assert stale.status_code == 409 and "preview again" in stale.json()["detail"]
+    assert fresh.status_code == 200
 
 
 def test_merge_preview_unknown_branch_is_400():
