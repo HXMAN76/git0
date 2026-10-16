@@ -12,6 +12,7 @@ from git0.config import get_settings
 from git0.core.db import close_db, ensure_schema, get_db, tenant_graph
 from git0.core.models import Commit, CommitRequest, Fact
 from git0.core.repo import MemoryRepo
+from git0.seed import seed
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 
@@ -51,6 +52,14 @@ async def init_tenant(tenant: str) -> dict:
     await repo.init()
     await ensure_schema(repo.graph)
     return {"tenant": tenant, "head": await repo.head("main")}
+
+
+@app.post("/api/{tenant}/seed")
+async def seed_tenant(tenant: str) -> dict:
+    repo = await repo_for(tenant)
+    await repo.init()  # schema indexes need the graph to exist, so init before ensure_schema
+    await ensure_schema(repo.graph)
+    return await seed(repo)
 
 
 @app.post("/api/{tenant}/branches/{name}")
