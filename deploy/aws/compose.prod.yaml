@@ -1,0 +1,28 @@
+# Production stack on the EC2 host (/opt/membranch). FalkorDB has NO published port: only the api container
+# reaches it over the compose network. The api listens on :80, and the security group allows :80 only from CloudFront.
+services:
+  falkordb:
+    image: falkordb/falkordb:v4.22.1
+    restart: always
+    environment:
+      REDIS_ARGS: "--requirepass ${FALKORDB_PASSWORD} --appendonly yes"
+      FALKORDB_ARGS: "MAX_QUEUED_QUERIES 100 TIMEOUT 5000 RESULTSET_SIZE 10000"
+    volumes:
+      - /var/lib/membranch/falkordb:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${FALKORDB_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 5s
+      retries: 20
+
+  api:
+    image: ${IMAGE}
+    restart: always
+    env_file: .env
+    environment:
+      PORT: "8080"
+      FALKORDB_URL: redis://:${FALKORDB_PASSWORD}@falkordb:6379
+    ports:
+      - "80:8080"
+    depends_on:
+      falkordb:
+        condition: service_healthy

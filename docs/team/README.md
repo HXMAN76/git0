@@ -7,7 +7,7 @@ Fill in names and GitHub handles, then replace `@PERSON_X` in `.github/CODEOWNER
 | **A: Graph core** | | `cypher/`, `src/membranch/core/` | B | Make every git verb one fast, correct Cypher query. The "original FalkorDB implementation" judges read |
 | **B: Agents + LLM** | | `src/membranch/llm/`, `agents/`, `mcp/` | A | Agents that only know what `checkout` tells them, plus a deterministic merge they can explain |
 | **C: Bench + concurrency** | | `bench/`, `scripts/`, README results | D | Measured proof: "LWW silently lost X%, Membranch lost 0" |
-| **D: UI + API + deploy** | | `src/membranch/api/`, `web/`, `Dockerfile`, Railway | C | A judge who opens the link reaches the conflict card in 60 seconds |
+| **D: UI + API + deploy** | | `src/membranch/api/`, `web/`, `Dockerfile`, `deploy/gcp/` | C | A judge who opens the link reaches the conflict card in 60 seconds |
 
 Docs per person: [A](person-a-graph-core.md) · [B](person-b-agents-llm.md) · [C](person-c-bench-concurrency.md) · [D](person-d-ui-deploy.md). Shared: [ARCHITECTURE](../ARCHITECTURE.md) · [PHASES](../PHASES.md) · [GIT_WORKFLOW](../GIT_WORKFLOW.md) · [STACK](../STACK.md).
 

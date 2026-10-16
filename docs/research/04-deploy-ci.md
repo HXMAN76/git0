@@ -1,5 +1,7 @@
 # 04 - Deployment, CI and Team Workflow (hackathon)
 
+> **Superseded (2026-10-16):** the team has GCP free-trial credits, so we deploy on GCP ([ADR 0005](../adr/0005-deploy-gcp.md), [06-gcp-deploy.md](06-gcp-deploy.md)). This file still applies for CI, the Dockerfile and the Railway fallback.
+
 Research date: 2026-10-16. Stack: FastAPI (Python 3.12, uv) + React static build + FalkorDB.
 Goal: live public URL within 3 days, free or cheap, reliable during judging (no cold starts ideally).
 

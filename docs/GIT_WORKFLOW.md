@@ -1,10 +1,10 @@
 # Git + GitHub workflow
 
-Trunk-based with short-lived branches. **`main` is always deployable**: Railway auto-deploys every push to it, so a broken `main` breaks the live demo.
+Trunk-based with short-lived branches. **`main` is always deployable**: `deploy-aws.yml` ships every green push to the AWS host, so a broken `main` breaks the live demo.
 
 ## Branches
 - `main`: PR + green CI + 1 buddy approval, squash merge only. The repo is **private on the free plan, so GitHub can't enforce this**. It's a team rule: never `git push origin main`.
-- Work branches: `<person>/<phase>-<topic>`, e.g. `a/p1-merge-commit`, `b/p1-llm-client`, `c/p1-baselines`, `d/p0-railway`. Keep each one under ~4 hours of work. Open the PR early as a draft.
+- Work branches: `<person>/<phase>-<topic>`, e.g. `a/p1-merge-commit`, `b/p1-llm-client`, `c/p1-baselines`, `d/p0-aws-deploy`. Keep each one under ~4 hours of work. Open the PR early as a draft.
 - Never commit straight to `main` (admins can bypass in an emergency. Post in the channel if you do).
 
 ## The loop for every task
@@ -46,9 +46,9 @@ Tests marked `@pytest.mark.llm` are skipped in CI (no API keys in CI. The bench 
 - If an integration breaks `main`: **revert first** (`gh pr revert` or `git revert`), fix on a branch. Don't debug on `main`.
 
 ## GitHub setup (lead, once)
-Already run on 2026-10-16: `scripts/github_setup.sh HXMAN76/membranch --no-protect` (labels, phase milestones, P0-P2 issues). When the repo goes public, re-run without `--no-protect` to switch on branch protection.
+Already run on 2026-10-16: `scripts/github_setup.sh HXMAN76/git0 --no-protect` (labels, phase milestones, P0-P2 issues). When the repo goes public, re-run without `--no-protect` to switch on branch protection.
 
-**Before submission (Phase 4): make the repo public** (`gh repo edit HXMAN76/membranch --visibility public --accept-visibility-change-consequences`). The hackathon requires a public source repo.
+**Before submission (Phase 4): make the repo public** (`gh repo edit HXMAN76/git0 --visibility public --accept-visibility-change-consequences`). The hackathon requires a public source repo.
 
 ## Tags
 `git tag g1 && git push --tags` at each passed gate (g0…g3) and `v1.0-submission` at submit. That gives the video and the judges a stable point.

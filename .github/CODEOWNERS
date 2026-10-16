@@ -9,4 +9,5 @@
 /src/membranch/api/      @PERSON_D
 /web/                    @PERSON_D
 /Dockerfile              @PERSON_D
+/deploy/                 @PERSON_D
 /.github/                @HXMAN76
