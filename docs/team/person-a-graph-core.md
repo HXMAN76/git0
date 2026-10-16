@@ -16,6 +16,8 @@
 4. Add a test in `tests/core/`, then `make cypher-docs` (CI fails if `docs/CYPHER.md` is stale)
 
 ## Phase 1 (→ Oct 17 10:00)
+- [ ] **One visible value per key** (ARCHITECTURE invariant 7): in `commit_cas`, for each new fact, `REMOVED_IN` the fact visible on the branch with the same `key` (visibility = added in `n.ancestors`, not removed there). Do it in a `CALL {}` block, matching by indexed `Fact.key`. Remove the strict `xfail` on `test_one_visible_value_per_key`
+- [ ] `src/membranch/seed.py` + `POST /api/{t}/seed`: launch-plan room (main base commit, `planner` + `scheduler` branches, a few facts with `DERIVED_FROM`). Everyone develops against it, and C's scenarios can reuse it
 - [ ] `cypher/seed_rules.cypher`: `(:Rule {p, strategy})` for each predicate (deadline/owner/budget/decision = needs-review, preference/status = latest-wins, rest = needs-review)
 - [ ] `cypher/merge_commit.cypher`: CAS on the **target** HEAD, `PARENT` to both heads, `ancestors = list.dedup(ha.ancestors + hb.ancestors + [ha.id, hb.id])`, `seq = max + 1`, plus `CALL {}` blocks for chosen facts / removals. **One query.**
 - [ ] `plan_merge` part 1 in `core/merge.py`: three checkouts → dicts by `key` → classify. Table-driven test with 6 combos (one side changed / both same / both different / added on one side / removed on one side / removed vs changed)

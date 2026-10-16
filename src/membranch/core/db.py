@@ -33,7 +33,15 @@ def tenant_graph(tenant: str, db: FalkorDB | None = None) -> AsyncGraph:
 
 async def ensure_schema(graph: AsyncGraph) -> None:
     """Range indexes from the perf guardrails. Re-running is safe: existing indexes are skipped."""
-    wanted = [("Commit", "id"), ("Branch", "name"), ("Fact", "id"), ("Fact", "key"), ("Agent", "id")]
+    wanted = [
+        ("Commit", "id"),
+        ("Branch", "name"),
+        ("Fact", "id"),
+        ("Fact", "key"),
+        ("Agent", "id"),
+        ("Session", "id"),
+        ("Procedure", "id"),
+    ]
     existing = {(row[0], tuple(row[1])) for row in (await graph.list_indices()).result_set}
     for label, prop in wanted:
         if (label, (prop,)) not in existing:
