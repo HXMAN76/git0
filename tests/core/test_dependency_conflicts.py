@@ -116,3 +116,21 @@ async def test_dependent_present_at_merge_base_is_not_a_dependency_conflict(repo
     plan = await plan_merge(repo, "planner", "main")
     assert plan.conflicts == []
     assert [f.o for f in plan.auto_merged] == ["mon"]
+
+
+async def test_second_round_after_keep_still_sees_the_dependent(repo):
+    """Keep Friday restores a fresh copy of it. The venue must hang off the copy too, or the next time the
+    planner moves the deadline the merge would not know anything depends on Friday."""
+    base, mon, venue = await story(repo)
+    first = await apply_merge(repo, await plan_merge(repo, "planner", "main"), {KEY: base.id})
+    [copy_id] = first.restored
+
+    await commit(repo, "planner", "move again", facts=[fact("launch", "deadline", "sat")])
+    plan = await plan_merge(repo, "planner", "main")
+
+    [c] = plan.conflicts
+    assert c.key == KEY and c.ours.id == copy_id and c.theirs.o == "sat"
+    assert [f.id for f in c.dependents_ours] == [venue.id]
+    done = await apply_merge(repo, plan, {KEY: c.theirs.id})
+    assert [f.id for f in done.invalidated] == [venue.id]
+    assert {f.key: f.o for f in await repo.checkout("main")} == {KEY: "sat"}

@@ -98,3 +98,18 @@ async def test_revert_recomputes_when_head_moves(repo):
     res = await revert(repo, "main", set_mon.id)
     assert moved and res.unchanged == 2  # team|owner and the racing fact, seen on the second attempt
     assert {f.key for f in await repo.checkout("main")} == {KEY, "team|owner", "x|owner"}
+
+
+async def test_revert_restored_copy_inherits_lineage(repo):
+    """A dependent of the replaced value must also hang off the restored copy, or later merges miss it."""
+    fri = fact("launch", "deadline", "fri")
+    venue = fact("venue", "status", "booked_fri")
+    await commit(repo, "main", "base", facts=[fri])
+    await commit(repo, "main", "book", facts=[venue], derived=[Derivation(child=venue.id, parent=fri.id)])
+    set_mon = await commit(repo, "main", "move to mon", facts=[fact("launch", "deadline", "mon")])
+
+    res = await revert(repo, "main", set_mon.id)
+
+    [copy_id] = res.restored
+    deps = await repo.dependents_visible(copy_id, await repo.head("main"))
+    assert [f.id for f in deps] == [venue.id]

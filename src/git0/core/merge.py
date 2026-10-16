@@ -14,7 +14,7 @@ apply_merge(repo, plan, choices, agent_id, msg) -> MergeApplied
     dependents (the cascade) and the plan's own removals. It also records a Conflict + Precedent per key.
 """
 
-from git0.core.models import Conflict, Fact, MergeApplied, MergeResult, MergeStrategy, NewFact
+from git0.core.models import Conflict, Derivation, Fact, MergeApplied, MergeResult, MergeStrategy, NewFact
 from git0.core.repo import CommitConflictError, MemoryRepo, new_id
 
 DELETE = "__delete__"  # choice sentinel: drop both sides of a conflict
@@ -190,6 +190,7 @@ async def apply_merge(
     dependents: dict[str, Fact] = {f.id: f for f in plan.invalidated_auto}
     resolutions = []
     restore: list[NewFact] = []
+    derived: list[Derivation] = []  # lineage for the restored copies
     for key, c in by_key.items():
         if key not in choices:
             raise ValueError(f"no choice for conflict {key!r}")
@@ -216,7 +217,9 @@ async def apply_merge(
             # re-committed copy of the base value has its own id, is not hidden, and needs no restoring.)
             w = c.ours if side == "target" else c.theirs
             if c.reason == "dependency" and c.base and w.id == c.base.id:
-                restore.append(NewFact(id=new_id(), s=w.s, p=w.p, o=w.o, confidence=w.confidence or 1.0))
+                copy = NewFact(id=new_id(), s=w.s, p=w.p, o=w.o, confidence=w.confidence or 1.0)
+                restore.append(copy)
+                derived += await repo.restore_links(w.id, copy.id)
         resolutions.append(
             {
                 "key": key,
@@ -239,6 +242,7 @@ async def apply_merge(
         msg=msg or f"merge {plan.source} into {plan.target}",
         agent_id=agent_id,
         facts=restore,
+        derived=derived,
     )
     if commit is None:  # no silent retry: the human decided on a stale picture
         raise CommitConflictError("target moved since plan; re-plan")

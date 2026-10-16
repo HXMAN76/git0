@@ -1,6 +1,6 @@
 """revert: undo one commit with a new revert commit, cascading to facts derived from what it added."""
 
-from git0.core.models import CommitRequest, Fact, NewFact, RevertResult
+from git0.core.models import CommitRequest, Derivation, Fact, NewFact, RevertResult
 from git0.core.repo import CommitConflictError, MemoryRepo, new_id
 
 
@@ -29,11 +29,13 @@ async def revert(
         gone = {*reverted, *cascaded}
         live_keys = {f.key for i, f in visible.items() if i not in gone}
         restore: dict[str, NewFact] = {}
+        # A restored copy gets a new id, so give it the original's lineage or later merges lose track of it.
+        derived: list[Derivation] = []
         for old in removed_by_commit:
             if old.key not in live_keys and old.key not in restore:
-                restore[old.key] = NewFact(
-                    id=new_id(), s=old.s, p=old.p, o=old.o, confidence=old.confidence or 1.0
-                )
+                copy = NewFact(id=new_id(), s=old.s, p=old.p, o=old.o, confidence=old.confidence or 1.0)
+                restore[old.key] = copy
+                derived += await repo.restore_links(old.id, copy.id)
         restored = list(restore.values())
 
         if not (reverted or cascaded or restored):
@@ -47,6 +49,7 @@ async def revert(
                 msg=f"revert {commit_id}",
                 removed=[*reverted, *cascaded],
                 facts=restored,
+                derived=derived,
             ),
             expected=head,
         )

@@ -5,7 +5,7 @@ import uuid
 
 from falkordb.asyncio.graph import AsyncGraph
 
-from git0.core.models import Commit, CommitRequest, Fact, NewFact, Procedure, Scorecard
+from git0.core.models import Commit, CommitRequest, Derivation, Fact, NewFact, Procedure, Scorecard
 from git0.core.queries import Q
 
 
@@ -110,6 +110,15 @@ class MemoryRepo:
         rows = _rows(await self.graph.ro_query(Q["dependents_visible"], {"fid": fact_id, "head": head}))
         return [Fact(**r) for r in rows]
 
+    async def restore_links(self, original_id: str, copy_id: str) -> list[Derivation]:
+        """DERIVED_FROM edges a restored copy needs: its original's children now also derive from the copy,
+        and the copy derives from the original's parents. One read; the caller writes them with the copy."""
+        rows = _rows(await self.graph.ro_query(Q["fact_links"], {"fid": original_id}))
+        children, parents = (rows[0]["children"], rows[0]["parents"]) if rows else ([], [])
+        return [Derivation(child=c, parent=copy_id) for c in children] + [
+            Derivation(child=copy_id, parent=p) for p in parents
+        ]
+
     async def precedent(self, p: str) -> tuple[str, int] | None:
         """(choice, count) of the most-chosen past resolution for predicate `p`, or None."""
         rows = _rows(await self.graph.ro_query(Q["precedent_lookup"], {"p": p}))
@@ -125,10 +134,12 @@ class MemoryRepo:
         msg: str,
         agent_id: str,
         facts: list[NewFact] | None = None,
+        derived: list[Derivation] | None = None,
     ) -> Commit | None:
         """One CAS attempt at a two-parent merge commit on `target`. None = target HEAD != expected_target.
 
-        `facts` are created in the merge commit (used to restore a hidden dependency-conflict winner).
+        `facts` are created in the merge commit (used to restore a hidden dependency-conflict winner);
+        `derived` links them into the lineage (see restore_links).
         """
         params = {
             "target": target,
@@ -140,6 +151,7 @@ class MemoryRepo:
             "removed": removed,
             "resolutions": resolutions,
             "facts": [f.model_dump() for f in facts or []],
+            "derived": [d.model_dump() for d in derived or []],
         }
         rows = _rows(await self.graph.query(Q["merge_commit"], params))
         return Commit(id=rows[0]["id"], seq=rows[0]["seq"]) if rows else None

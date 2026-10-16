@@ -216,6 +216,21 @@ RETURN DISTINCT d.id AS id, d.s AS s, d.p AS p, d.o AS o, d.key AS key,
 ORDER BY key
 ```
 
+## `fact_links`
+
+Direct DERIVED_FROM neighbours of fact $fid: `children` derive from it, `parents` it derives from.
+Restoring a fact (merge "keep the base value", revert) creates a fresh copy under a new id; the copy must
+inherit these edges or later merges cannot see what depends on it (and would skip the dependency conflict).
+Read-only. OPTIONAL MATCH + collect keeps the row (with empty lists) when the fact has no links.
+
+```cypher
+MATCH (x:Fact {id: $fid})
+OPTIONAL MATCH (c:Fact)-[:DERIVED_FROM]->(x)
+WITH x, collect(DISTINCT c.id) AS children
+OPTIONAL MATCH (x)-[:DERIVED_FROM]->(p:Fact)
+RETURN children, collect(DISTINCT p.id) AS parents
+```
+
 ## `fact_lookup`
 
 "Is X in team memory?" (M10). 0 rows = no path from the branch HEAD = "not in memory", never a guess.
@@ -293,6 +308,9 @@ keyed by (predicate, chosen side) that the "learns from your resolutions" featur
 $facts: NewFact maps to create in this commit. Only used to RESTORE a dependency-conflict winner: the other
 side's commits removed the base-valued fact, so the union hides it and choosing it needs a fresh copy.
 Same shape as the facts block in commit_cas, without retiring old values (the loser is in $removed).
+$derived: {child, parent} pairs, same shape as commit_cas. Used with $facts so a restored copy inherits the
+original's lineage in both directions (its dependents now also derive from the copy, and the copy derives
+from the original's parents). Runs after the facts block so the copy exists when the edges are matched.
 NOTE: CALL {} unit subqueries, never a bare UNWIND: UNWIND [] drops the row and fakes a CAS failure.
 
 ```cypher
@@ -319,6 +337,12 @@ CALL {
   UNWIND $facts AS f
   CREATE (:Fact {id: f.id, s: f.s, p: f.p, o: f.o, key: f.s + '|' + f.p, confidence: f.confidence,
                  agent_id: n.agent_id, created_at: timestamp()})-[:ADDED_IN]->(n)
+}
+CALL {
+  WITH n
+  UNWIND $derived AS d
+  MATCH (child:Fact {id: d.child}), (parent:Fact {id: d.parent})
+  CREATE (child)-[:DERIVED_FROM]->(parent)
 }
 CALL {
   WITH n
