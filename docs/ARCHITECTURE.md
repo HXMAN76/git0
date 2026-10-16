@@ -122,7 +122,7 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 | `POST /api/{t}/revert` | `{branch, commit_id}` → `{reverted, unchanged}` | A | P2 |
 | `POST /api/{t}/agents/{agent}/kill` | → `{successor, inherited}` (handoff) | B | P2 |
 | `POST /api/{t}/load-test` | `{writers}` → `{commits, lost, retries, p50_ms, p95_ms}` | C `run_load` | P2 |
-| `GET /api/{t}/scorecard` | → live Track 02 counts | A `scorecard.cypher` | P2 |
+| `GET /api/{t}/scorecard` | → live Track 02 counts | A `scorecard.cypher` | done |
 | `POST /api/{t}/fork` | → `{graph, ms}` (GRAPH.COPY) | A | P3 |
 
 Rule: a change to a contract file needs a PR that tags every consumer. Stubs raise `NotImplementedError` with a pointer to the owner's doc, so consumers code against the signature and swap in the real thing when it lands.

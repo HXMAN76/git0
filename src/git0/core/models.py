@@ -102,6 +102,24 @@ class Commit(BaseModel):
     removed: int = 0
 
 
+class Scorecard(BaseModel):
+    """Live demo counters. `tenants` is filled by the API layer, `query_ms` is FalkorDB's own query time."""
+
+    episodes: int
+    sessions: int
+    facts_on_main: int
+    procedures_on_main: int
+    commits: int  # every commit with a kind; excludes the root created by init
+    merges: int
+    reverts: int
+    handoffs: int
+    conflicts_resolved: int
+    precedents_reused: int
+    agents: int
+    tenants: int = 0
+    query_ms: float
+
+
 class MergeStrategy(StrEnum):
     AUTO = "auto"  # non-colliding change, merged without asking
     LATEST_WINS = "latest-wins"

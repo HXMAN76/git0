@@ -5,7 +5,7 @@ import uuid
 
 from falkordb.asyncio.graph import AsyncGraph
 
-from git0.core.models import Commit, CommitRequest, Fact, NewFact, Procedure
+from git0.core.models import Commit, CommitRequest, Fact, NewFact, Procedure, Scorecard
 from git0.core.queries import Q
 
 
@@ -167,3 +167,8 @@ class MemoryRepo:
     async def lookup(self, branch: str, key: str) -> list[dict]:
         """Empty list means 'not in memory' (no path from HEAD), which the agents must say verbatim."""
         return _rows(await self.graph.ro_query(Q["fact_lookup"], {"branch": branch, "key": key}))
+
+    async def scorecard(self) -> Scorecard:
+        """Live counters in one read query. `tenants` stays 0 here: only the API knows the other graphs."""
+        res = await self.graph.ro_query(Q["scorecard"])
+        return Scorecard(**_rows(res)[0], query_ms=res.run_time_ms)

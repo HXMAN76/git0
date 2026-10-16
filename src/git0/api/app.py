@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from git0 import __version__
 from git0.config import get_settings
 from git0.core.db import close_db, ensure_schema, get_db, tenant_graph
-from git0.core.models import Commit, CommitRequest, Fact
+from git0.core.models import Commit, CommitRequest, Fact, Scorecard
 from git0.core.repo import MemoryRepo
 from git0.seed import seed
 
@@ -88,6 +88,14 @@ async def checkout(tenant: str, name: str) -> list[Fact]:
 @app.get("/api/{tenant}/branches/{name}/log")
 async def log(tenant: str, name: str, limit: int = 50) -> list[Commit]:
     return await (await repo_for(tenant)).log(name, limit)
+
+
+@app.get("/api/{tenant}/scorecard")
+async def scorecard(tenant: str) -> Scorecard:
+    card = await (await repo_for(tenant)).scorecard()
+    prefix = get_settings().tenant_graph_prefix
+    card.tenants = sum(1 for g in await get_db().list_graphs() if g.startswith(prefix))
+    return card
 
 
 @app.post("/api/{tenant}/commits")
