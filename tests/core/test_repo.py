@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from membranch.core.models import CommitRequest, Derivation, Episode, NewFact
+from membranch.core.models import CommitRequest, Derivation, Episode, NewFact, NewProcedure
 from membranch.core.queries import Q
 from membranch.core.repo import new_id
 
@@ -118,3 +118,50 @@ async def test_concurrent_writers_lose_nothing(repo, writers):
     assert len({c.seq for c in log}) == writers + 1  # linear history, no forks
     assert len(await repo.checkout("main")) == writers
     assert sum(r for _, r in results) >= 0
+
+
+async def test_sessions_group_episodes_across_commits(repo):
+    """Persistent conversation history: one Session, many turns, each linked to the commit it produced."""
+    for i, text in enumerate(["launch is Friday", "book the venue"]):
+        await repo.commit(
+            CommitRequest(
+                branch="main",
+                agent_id="planner",
+                msg=f"turn {i}",
+                episodes=[Episode(id=new_id(), text=text, session_id="s1")],
+            )
+        )
+    res = await repo.graph.ro_query(
+        "MATCH (s:Session {id: 's1'})-[:HAS_TURN]->(e:Episode)<-[:FROM_EPISODE]-(c:Commit) "
+        "RETURN count(DISTINCT s), count(e), count(DISTINCT c)"
+    )
+    assert res.result_set == [[1, 2, 2]]
+
+
+async def test_procedures_are_versioned_like_facts(repo):
+    proc = NewProcedure(id=new_id(), trigger="launch date moves", steps='["notify qa", "add 24h freeze"]')
+    await repo.create_branch("planner")
+    await repo.commit(CommitRequest(branch="planner", agent_id="planner", msg="learned", procedures=[proc]))
+    assert await repo.procedures("main") == []
+    [got] = await repo.procedures("planner")
+    assert got.trigger == "launch date moves" and got.agent_id == "planner"
+    await repo.commit(
+        CommitRequest(branch="planner", agent_id="planner", msg="drop", removed_procedures=[proc.id])
+    )
+    assert await repo.procedures("planner") == []
+
+
+@pytest.mark.xfail(
+    strict=True, reason="Phase 1 / Person A: commit must REMOVED_IN the visible fact with the same key"
+)
+async def test_one_visible_value_per_key(repo):
+    """Invariant: a branch view holds at most one fact per (subject, predicate) key.
+    Today a second commit for the same key leaves both values visible. When A fixes commit_cas,
+    this test passes and strict xfail fails the suite: delete the marker then."""
+    await repo.commit(
+        CommitRequest(branch="main", agent_id="a", msg="fri", facts=[fact("launch", "deadline", "fri")])
+    )
+    await repo.commit(
+        CommitRequest(branch="main", agent_id="a", msg="mon", facts=[fact("launch", "deadline", "mon")])
+    )
+    assert [f.o for f in await repo.checkout("main")] == ["mon"]

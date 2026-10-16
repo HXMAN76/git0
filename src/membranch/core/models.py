@@ -39,6 +39,23 @@ class Fact(BaseModel):
     agent_id: str | None = None
 
 
+class NewProcedure(BaseModel):
+    """Procedural memory: a learned workflow, versioned on branches like facts."""
+
+    id: str
+    trigger: str = Field(description="when this applies, e.g. 'launch date moves'")
+    steps: str = Field(description="JSON-encoded list of steps (FalkorDB properties can't hold maps)")
+    confidence: float = 1.0
+
+
+class Procedure(BaseModel):
+    id: str
+    trigger: str
+    steps: str
+    confidence: float | None = None
+    agent_id: str | None = None
+
+
 class Episode(BaseModel):
     """One chat turn or tool call that produced a commit (episodic memory)."""
 
@@ -58,6 +75,8 @@ class CommitRequest(BaseModel):
     msg: str
     facts: list[NewFact] = []
     removed: list[str] = []
+    procedures: list[NewProcedure] = []
+    removed_procedures: list[str] = []
     derived: list[Derivation] = []
     episodes: list[Episode] = []
 

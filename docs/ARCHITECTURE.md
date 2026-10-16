@@ -57,6 +57,8 @@ Invariants (tests enforce these; do not break them):
 4. **Facts are never edited or deleted.** A change = `REMOVED_IN` the old fact plus `ADDED_IN` a new one. History stays complete.
 5. **Agents read memory only through `checkout(branch)`** (M2). No in-process caches, no message passing between agents.
 6. Fixed predicates: `deadline, owner, status, location, budget, decision, preference, depends_on, contact`.
+7. **One visible value per key per branch.** A commit that adds `s|p` must `REMOVED_IN` the fact currently visible for that key. **Not enforced yet:** Person A, Phase 1. `test_one_visible_value_per_key` is a strict xfail until then.
+8. Every agent turn is an `(:Episode)` under a `(:Session)` (`HAS_TURN`) and linked to its commit (`FROM_EPISODE`). Done in `commit_cas`.
 
 ## 3. Verified FalkorDB behaviour (tested 2026-10-16 on `falkordb/falkordb:latest`)
 
@@ -104,5 +106,23 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 | `AgentSpec`, `AgentReply`, `step()` | B | D | `src/membranch/agents/base.py` |
 | REST + SSE endpoints (OpenAPI) | D | web | `src/membranch/api/app.py` → `pnpm gen:api` |
 | Scenario YAML schema + result JSON | C | README, video | `bench/` |
+
+### REST endpoints (contract between B and D; implement in `api/app.py`)
+| Method + path | Body → response | Backend | Status |
+|-|-|-|-|
+| `GET /api/health` | → `{ok, version, graphs}` | — | done |
+| `POST /api/{t}/init` | → `{tenant, head}` | A | done |
+| `POST /api/{t}/seed` | → `{branches, commits}`: launch-plan room (main, planner, scheduler) | A `seed.py` | P1 |
+| `POST /api/{t}/branches/{name}` · `GET .../checkout` · `GET .../log` | `Fact[]` / `Commit[]` | A | done |
+| `POST /api/{t}/commits` | `CommitRequest` → `{commit, retries}` | A | done |
+| `GET /api/{t}/facts/{id}/why` | → why-path rows | A | done |
+| `POST /api/{t}/agents/{agent}/messages` (SSE) | `{message, session_id}` → events `token`, `commit`, `error`, `: ping` every 15 s | B `agents.step` | P1 |
+| `POST /api/{t}/merge/preview` | `{source, target}` → `MergeResult` | A `plan_merge` | P2 |
+| `POST /api/{t}/merge/resolve` | `{source, target, choices}` → `{merge_commit, rederived}` | A `apply_merge` + B Arbiter | P2 |
+| `POST /api/{t}/revert` | `{branch, commit_id}` → `{reverted, unchanged}` | A | P2 |
+| `POST /api/{t}/agents/{agent}/kill` | → `{successor, inherited}` (handoff) | B | P2 |
+| `POST /api/{t}/load-test` | `{writers}` → `{commits, lost, retries, p50_ms, p95_ms}` | C `run_load` | P2 |
+| `GET /api/{t}/scorecard` | → live Track 02 counts | A `scorecard.cypher` | P2 |
+| `POST /api/{t}/fork` | → `{graph, ms}` (GRAPH.COPY) | A | P3 |
 
 Rule: a change to a contract file needs a PR that tags every consumer. Stubs raise `NotImplementedError` with a pointer to the owner's doc, so consumers code against the signature and swap in the real thing when it lands.

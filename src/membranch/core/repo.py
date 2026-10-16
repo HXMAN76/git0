@@ -5,7 +5,7 @@ import uuid
 
 from falkordb.asyncio.graph import AsyncGraph
 
-from membranch.core.models import Commit, CommitRequest, Fact
+from membranch.core.models import Commit, CommitRequest, Fact, Procedure
 from membranch.core.queries import Q
 
 
@@ -53,6 +53,8 @@ class MemoryRepo:
             "agent_id": req.agent_id,
             "facts": [f.model_dump() for f in req.facts],
             "removed": req.removed,
+            "procedures": [p.model_dump() for p in req.procedures],
+            "removed_procedures": req.removed_procedures,
             "derived": [d.model_dump() for d in req.derived],
             "episodes": [e.model_dump() for e in req.episodes],
         }
@@ -70,6 +72,10 @@ class MemoryRepo:
 
     async def checkout(self, branch: str) -> list[Fact]:
         return [Fact(**r) for r in _rows(await self.graph.ro_query(Q["checkout"], {"branch": branch}))]
+
+    async def procedures(self, branch: str) -> list[Procedure]:
+        rows = _rows(await self.graph.ro_query(Q["checkout_procedures"], {"branch": branch}))
+        return [Procedure(**r) for r in rows]
 
     async def log(self, branch: str, limit: int = 50) -> list[Commit]:
         rows = _rows(await self.graph.ro_query(Q["log"], {"branch": branch, "limit": limit}))
