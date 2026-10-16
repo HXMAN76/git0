@@ -1,4 +1,4 @@
-# Person B: Agents + LLM
+# Person B: Agents + LLM, Roshan T (@Git-Roshan09)
 
 **You own:** `src/membranch/llm/`, `src/membranch/agents/`, `src/membranch/mcp/`, `tests/llm/`, `tests/agents/`. **Buddy reviewer:** A.
 **Rule M2:** an agent may only learn things through `repo.checkout(branch)` (and `log` for handoff). No module-level state, no passing text between agents. If FalkorDB is down, agents know nothing.

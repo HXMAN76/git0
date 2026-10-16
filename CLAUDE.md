@@ -12,3 +12,4 @@ Read `docs/ARCHITECTURE.md` first. Hard rules:
 8. Shared contracts: `src/membranch/core/models.py`, stub signatures in `core/merge.py`, `llm/client.py`, `agents/base.py`. Don't change them without telling the user it affects other owners.
 9. Before finishing: `make check`. Commit trailer `Assisted-by: Claude Code` when you wrote meaningful code.
 10. The human owner must be able to explain what you wrote (hackathon rule). Keep code small and comment the *why*.
+11. `docs/plan/` is pitch/strategy for humans (judge flow, video script). Skip it for coding tasks unless asked; `docs/ARCHITECTURE.md`, ADRs and the code take precedence.
