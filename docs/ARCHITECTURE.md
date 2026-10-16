@@ -36,16 +36,17 @@ Source plan: `git-for-memory-winplan.md` (2026-10-16). This file covers what we 
 (:Agent {id, name, role})
 (:Session {id, started_at})-[:HAS_TURN]->(:Episode {id, text, session_id, ts})
 (:Branch {name})-[:HEAD]->(:Commit)
-(:Commit {id, seq, msg, ts, agent_id, ancestors:[ids]})-[:PARENT]->(:Commit)   // 2 parents on merge
+(:Commit {id, seq, msg, ts, agent_id, kind, ancestors:[ids]})-[:PARENT]->(:Commit)   // 2 parents on merge
 (:Commit)-[:FROM_EPISODE]->(:Episode)
 (:Agent)-[:AUTHORED]->(:Commit)
 (:Fact {id, s, p, o, key: s+'|'+p, confidence, agent_id, created_at})
 (:Fact)-[:ADDED_IN]->(:Commit)
 (:Fact)-[:REMOVED_IN]->(:Commit)
-(:Fact)-[:DERIVED_FROM]->(:Fact)
-(:Procedure {trigger, steps, agent_id, confidence})-[:ADDED_IN]->(:Commit)      // procedural memory
+(:Fact)-[:DERIVED_FROM]->(:Fact)   // not versioned; a restored copy inherits its original's edges
+(:Procedure {trigger, steps, agent_id, confidence})-[:ADDED_IN|REMOVED_IN]->(:Commit)  // procedural memory
 (:Agent)-[:READ {ts}]->(:Fact)
-(:Conflict {key, status})-[:SIDE_A|SIDE_B|BASE]->(:Fact)
+(:Conflict {key, status, side, ts})-[:SIDE_A|SIDE_B|BASE]->(:Fact)
+(:Conflict)-[:RESOLVED_IN]->(:Commit)   // the merge commit that resolved it
 (:Conflict)-[:RESOLVED_BY]->(:Precedent {key_pattern, choice, count})
 (:Rule {p, strategy})          // deadline/owner: needs-review, preference: latest-wins
 ```
@@ -57,7 +58,7 @@ Invariants (tests enforce these; do not break them):
 4. **Facts are never edited or deleted.** A change = `REMOVED_IN` the old fact plus `ADDED_IN` a new one. History stays complete.
 5. **Agents read memory only through `checkout(branch)`** (M2). No in-process caches, no message passing between agents.
 6. Fixed predicates: `deadline, owner, status, location, budget, decision, preference, depends_on, contact`.
-7. **One visible value per key per branch.** A commit that adds `s|p` must `REMOVED_IN` the fact currently visible for that key. **Not enforced yet:** Person A, Phase 1. `test_one_visible_value_per_key` is a strict xfail until then.
+7. **One visible value per key per branch.** A commit that adds `s|p` must `REMOVED_IN` the fact currently visible for that key. Enforced in `commit_cas`, which `REMOVED_IN`s the visible same-key fact; `CommitRequest` rejects duplicate keys within one commit. Test: `test_one_visible_value_per_key`.
 8. Every agent turn is an `(:Episode)` under a `(:Session)` (`HAS_TURN`) and linked to its commit (`FROM_EPISODE`). Done in `commit_cas`.
 
 ## 3. Verified FalkorDB behaviour (tested 2026-10-16 on `falkordb/falkordb:latest`)
@@ -87,9 +88,9 @@ Invariants (tests enforce these; do not break them):
 
 **Agent turn** (`agents/`): `checkout(branch)` → prompt with the current entity list (reuse ids) → `complete_json(Extraction)` (Groq gpt-oss-20b strict schema) → `commit(CommitRequest{facts, removed, derived, episodes})` → reply cites fact ids → UI can open the why-path.
 
-**Merge to main** (`core/merge.py`): `merge_base` → checkout base/ours/theirs → classify by `key` → `(:Rule)` picks the strategy → conflicts get dependents and a precedent → UI conflict card → human picks → `apply_merge` = one merge commit plus a saved `(:Precedent)` → Arbiter re-runs only the owners of invalidated derived facts.
+**Merge to main** (`core/merge.py`): `merge_base` → checkout base/ours/theirs → classify by `key` → `(:Rule)` picks the strategy → conflicts get dependents and a precedent (a one-sided change is also a conflict, `reason=dependency`, when the other side derived facts from the value being replaced) → UI conflict card → human picks → `apply_merge` = one merge commit plus a saved `(:Precedent)` → Arbiter re-runs only the owners of invalidated derived facts.
 
-**Revert cascade**: revert commit C = new commit that `REMOVED_IN` the facts C added, plus every fact reached by `DERIVED_FROM*1..6` from them, on the branch (and on branches that merged C).
+**Revert cascade** (`core/revert.py`): revert C on branch B = one `kind=revert` commit on B only (other branches get it by merging B). It `REMOVED_IN`s the still-visible facts C added plus their visible `DERIVED_FROM*1..6` dependents, and re-adds fresh copies (with the original's `DERIVED_FROM` lineage) of values C replaced whose key is now empty. Reverting a merge commit undoes only that merge commit's own `ADDED_IN`/`REMOVED_IN` edges, not the facts the merge brought in.
 
 ## 5. What breaks without FalkorDB (README section, M2)
 
@@ -99,7 +100,7 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 
 | Contract | Owner | Consumers | File |
 |-|-|-|-|
-| Pydantic models (`Fact`, `CommitRequest`, `Conflict`, `MergeResult`) | A | B, C, D | `src/git0/core/models.py` |
+| Pydantic models (`Fact`, `CommitRequest`, `Conflict`, `MergeResult`, `MergeApplied`, `RevertResult`, `Scorecard`) | A | B, C, D | `src/git0/core/models.py` |
 | `MemoryRepo` methods | A | B, C, D | `src/git0/core/repo.py` |
 | `plan_merge` / `apply_merge` | A | B (Arbiter), C, D | `src/git0/core/merge.py` |
 | `complete_json` + `LLMError` | B | B (agents), C (cached bench) | `src/git0/llm/client.py` |
@@ -112,17 +113,18 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 |-|-|-|-|
 | `GET /api/health` | → `{ok, version, graphs}` | — | done |
 | `POST /api/{t}/init` | → `{tenant, head}` | A | done |
-| `POST /api/{t}/seed` | → `{branches, commits}`: launch-plan room (main, planner, scheduler) | A `seed.py` | P1 |
+| `POST /api/{t}/seed` | → `{created, branches, facts_on_main, facts_on_scheduler}`: launch-plan room (main, planner, scheduler) | A `seed.py` | done |
 | `POST /api/{t}/branches/{name}` · `GET .../checkout` · `GET .../log` | `Fact[]` / `Commit[]` | A | done |
 | `POST /api/{t}/commits` | `CommitRequest` → `{commit, retries}` | A | done |
 | `GET /api/{t}/facts/{id}/why` | → why-path rows | A | done |
+| `GET /api/{t}/branches/{name}/procedures` | → `Procedure[]` | A | done |
 | `POST /api/{t}/agents/{agent}/messages` (SSE) | `{message, session_id}` → events `token`, `commit`, `error`, `: ping` every 15 s | B `agents.step` | P1 |
-| `POST /api/{t}/merge/preview` | `{source, target}` → `MergeResult` | A `plan_merge` | P2 |
-| `POST /api/{t}/merge/resolve` | `{source, target, choices}` → `{merge_commit, rederived}` | A `apply_merge` + B Arbiter | P2 |
-| `POST /api/{t}/revert` | `{branch, commit_id}` → `{reverted, unchanged}` | A | P2 |
+| `POST /api/{t}/merge/preview` | `{source, target}` → `MergeResult` | A `plan_merge` | done |
+| `POST /api/{t}/merge/resolve` | `{source, target, choices, agent_id?, target_head?, source_head?}` → `MergeApplied` (`invalidated` = facts for the Arbiter to re-derive). Send the previewed heads back: if either branch moved since, 409 "preview again" | A `apply_merge` | done |
+| `POST /api/{t}/revert` | `{branch, commit_id, agent_id?}` → `RevertResult` | A `revert` | done |
 | `POST /api/{t}/agents/{agent}/kill` | → `{successor, inherited}` (handoff) | B | P2 |
 | `POST /api/{t}/load-test` | `{writers}` → `{commits, lost, retries, p50_ms, p95_ms}` | C `run_load` | P2 |
-| `GET /api/{t}/scorecard` | → live Track 02 counts | A `scorecard.cypher` | P2 |
+| `GET /api/{t}/scorecard` | → live Track 02 counts | A `scorecard.cypher` | done |
 | `POST /api/{t}/fork` | → `{graph, ms}` (GRAPH.COPY) | A | P3 |
 
 Rule: a change to a contract file needs a PR that tags every consumer. Stubs raise `NotImplementedError` with a pointer to the owner's doc, so consumers code against the signature and swap in the real thing when it lands.

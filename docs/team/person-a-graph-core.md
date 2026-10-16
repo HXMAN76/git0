@@ -16,18 +16,18 @@
 4. Add a test in `tests/core/`, then `make cypher-docs` (CI fails if `docs/CYPHER.md` is stale)
 
 ## Phase 1 (→ Oct 17 10:00)
-- [ ] **One visible value per key** (ARCHITECTURE invariant 7): in `commit_cas`, for each new fact, `REMOVED_IN` the fact visible on the branch with the same `key` (visibility = added in `n.ancestors`, not removed there). Do it in a `CALL {}` block, matching by indexed `Fact.key`. Remove the strict `xfail` on `test_one_visible_value_per_key`
-- [ ] `src/git0/seed.py` + `POST /api/{t}/seed`: launch-plan room (main base commit, `planner` + `scheduler` branches, a few facts with `DERIVED_FROM`). Everyone develops against it, and C's scenarios can reuse it
-- [ ] `cypher/seed_rules.cypher`: `(:Rule {p, strategy})` for each predicate (deadline/owner/budget/decision = needs-review, preference/status = latest-wins, rest = needs-review)
-- [ ] `cypher/merge_commit.cypher`: CAS on the **target** HEAD, `PARENT` to both heads, `ancestors = list.dedup(ha.ancestors + hb.ancestors + [ha.id, hb.id])`, `seq = max + 1`, plus `CALL {}` blocks for chosen facts / removals. **One query.**
-- [ ] `plan_merge` part 1 in `core/merge.py`: three checkouts → dicts by `key` → classify. Table-driven test with 6 combos (one side changed / both same / both different / added on one side / removed on one side / removed vs changed)
+- [x] **One visible value per key** (ARCHITECTURE invariant 7): in `commit_cas`, for each new fact, `REMOVED_IN` the fact visible on the branch with the same `key` (visibility = added in `n.ancestors`, not removed there). Do it in a `CALL {}` block, matching by indexed `Fact.key`. Remove the strict `xfail` on `test_one_visible_value_per_key`
+- [x] `src/git0/seed.py` + `POST /api/{t}/seed`: launch-plan room (main base commit, `planner` + `scheduler` branches, a few facts with `DERIVED_FROM`). Everyone develops against it, and C's scenarios can reuse it
+- [x] `cypher/seed_rules.cypher`: `(:Rule {p, strategy})` for each predicate (deadline/owner/budget/decision = needs-review, preference/status = latest-wins, rest = needs-review)
+- [x] `cypher/merge_commit.cypher`: CAS on the **target** HEAD, `PARENT` to both heads, `ancestors = list.dedup(ha.ancestors + hb.ancestors + [ha.id, hb.id])`, `seq = max + 1`, plus `CALL {}` blocks for chosen facts / removals. **One query.**
+- [x] `plan_merge` part 1 in `core/merge.py`: three checkouts → dicts by `key` → classify. Table-driven test with 6 combos (one side changed / both same / both different / added on one side / removed on one side / removed vs changed)
 - [ ] Deploy check (gate G1): on the live HTTPS URL, `POST /api/g1/init`, `POST /api/g1/commits`, `GET .../checkout` and `/log` return the right data (tests aren't shipped in the image, so check through the API)
 
 ## Phase 2 (→ Oct 17 22:00)
-- [ ] `plan_merge` complete: dependents on both sides (`dependents.cypher`), `Rule` → strategy, precedent lookup (`MATCH (pr:Precedent {key_pattern:$p}) RETURN pr ORDER BY pr.count DESC LIMIT 1`)
-- [ ] `apply_merge(choices)`: merge commit + `(:Conflict)-[:RESOLVED_BY]->(:Precedent)` with count increment (`MERGE` + `ON MATCH SET`)
-- [ ] `revert(commit_id)`: one query that removes the facts the commit added **plus** their `DERIVED_FROM*1..6` dependents visible on the branch. Return the list for the UI ("3 reverted, 37 unchanged")
-- [ ] Scorecard counts query (`cypher/scorecard.cypher`): episodes, facts on main, precedents reused, sessions, handoffs, commits, tenants. All live, no hard-coding (M3)
+- [x] `plan_merge` complete: dependents on both sides (`dependents.cypher`), `Rule` → strategy, precedent lookup (`MATCH (pr:Precedent {key_pattern:$p}) RETURN pr ORDER BY pr.count DESC LIMIT 1`)
+- [x] `apply_merge(choices)`: merge commit + `(:Conflict)-[:RESOLVED_BY]->(:Precedent)` with count increment (`MERGE` + `ON MATCH SET`)
+- [x] `revert(commit_id)`: one read pass plus one write that removes the facts the commit added **plus** their `DERIVED_FROM*1..6` dependents visible on the branch. Return the list for the UI ("3 reverted, 37 unchanged")
+- [x] Scorecard counts query (`cypher/scorecard.cypher`): episodes, facts on main, precedents reused, sessions, handoffs, commits, tenants. All live, no hard-coding (M3)
 
 ## Phase 3 (→ Oct 18 12:00)
 - [ ] `GRAPH.PROFILE` each hot query. Record p50/p95 at 100/500/1000 commits in `docs/research/01-falkordb.md`

@@ -151,13 +151,9 @@ async def test_procedures_are_versioned_like_facts(repo):
     assert await repo.procedures("planner") == []
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Phase 1 / Person A: commit must REMOVED_IN the visible fact with the same key"
-)
 async def test_one_visible_value_per_key(repo):
     """Invariant: a branch view holds at most one fact per (subject, predicate) key.
-    Today a second commit for the same key leaves both values visible. When A fixes commit_cas,
-    this test passes and strict xfail fails the suite: delete the marker then."""
+    commit_cas retires the visible fact with the same key automatically."""
     await repo.commit(
         CommitRequest(branch="main", agent_id="a", msg="fri", facts=[fact("launch", "deadline", "fri")])
     )
@@ -173,3 +169,90 @@ async def test_ensure_schema_is_idempotent(repo):
 
     await ensure_schema(repo.graph)
     await ensure_schema(repo.graph)
+
+
+async def test_explicit_removal_plus_same_key_add_makes_one_removed_edge(repo):
+    """The explicit `removed` entry and the automatic same-key removal must MERGE into one edge."""
+    old = fact("launch", "deadline", "fri")
+    await repo.commit(CommitRequest(branch="main", agent_id="a", msg="fri", facts=[old]))
+    await repo.commit(
+        CommitRequest(
+            branch="main",
+            agent_id="a",
+            msg="mon",
+            removed=[old.id],
+            facts=[fact("launch", "deadline", "mon")],
+        )
+    )
+    res = await repo.graph.ro_query(
+        "MATCH (:Fact {id: $id})-[r:REMOVED_IN]->(:Commit) RETURN count(r)", {"id": old.id}
+    )
+    assert res.result_set[0][0] == 1
+    assert [f.o for f in await repo.checkout("main")] == ["mon"]
+
+
+def test_duplicate_key_in_one_commit_is_rejected():
+    with pytest.raises(ValueError, match="duplicate"):
+        CommitRequest(
+            branch="main",
+            agent_id="a",
+            msg="dup",
+            facts=[fact("launch", "deadline", "fri"), fact("launch", "deadline", "mon")],
+        )
+
+
+async def test_log_reports_commit_kind(repo):
+    await repo.commit(CommitRequest(branch="main", agent_id="a", msg="x", facts=[fact("a", "owner", "b")]))
+    assert (await repo.log("main"))[0].kind == "commit"
+
+
+async def test_same_key_on_branch_does_not_hide_main_value(repo):
+    await repo.commit(
+        CommitRequest(branch="main", agent_id="a", msg="fri", facts=[fact("launch", "deadline", "fri")])
+    )
+    await repo.create_branch("b")
+    await repo.commit(
+        CommitRequest(branch="b", agent_id="a", msg="mon", facts=[fact("launch", "deadline", "mon")])
+    )
+    assert [f.o for f in await repo.checkout("main")] == ["fri"]
+    assert [f.o for f in await repo.checkout("b")] == ["mon"]
+
+
+async def _removed_in_count(repo, fact_id):
+    res = await repo.graph.ro_query(
+        "MATCH (:Fact {id: $id})-[r:REMOVED_IN]->(:Commit) RETURN count(r)", {"id": fact_id}
+    )
+    return res.result_set[0][0]
+
+
+async def test_fact_added_on_main_after_branch_point_is_not_removed_by_branch(repo):
+    """Exercises the `c.id IN n.ancestors` filter: tue is not visible at b's parent, so b leaves it alone."""
+    await repo.commit(
+        CommitRequest(branch="main", agent_id="a", msg="fri", facts=[fact("launch", "deadline", "fri")])
+    )
+    await repo.create_branch("b")
+    tue = fact("launch", "deadline", "tue")
+    await repo.commit(CommitRequest(branch="main", agent_id="a", msg="tue", facts=[tue]))
+    await repo.commit(
+        CommitRequest(branch="b", agent_id="a", msg="mon", facts=[fact("launch", "deadline", "mon")])
+    )
+    assert await _removed_in_count(repo, tue.id) == 0
+    assert [f.o for f in await repo.checkout("main")] == ["tue"]
+    assert [f.o for f in await repo.checkout("b")] == ["mon"]
+
+
+async def test_sibling_branches_each_remove_the_shared_base_fact(repo):
+    base = fact("launch", "deadline", "fri")
+    await repo.commit(CommitRequest(branch="main", agent_id="a", msg="fri", facts=[base]))
+    await repo.create_branch("a")
+    await repo.create_branch("b")
+    await repo.commit(
+        CommitRequest(branch="a", agent_id="a", msg="mon", facts=[fact("launch", "deadline", "mon")])
+    )
+    await repo.commit(
+        CommitRequest(branch="b", agent_id="b", msg="wed", facts=[fact("launch", "deadline", "wed")])
+    )
+    assert await _removed_in_count(repo, base.id) == 2  # one edge per branch commit
+    assert [f.o for f in await repo.checkout("a")] == ["mon"]
+    assert [f.o for f in await repo.checkout("b")] == ["wed"]
+    assert [f.o for f in await repo.checkout("main")] == ["fri"]

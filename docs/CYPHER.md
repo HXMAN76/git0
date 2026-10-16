@@ -17,7 +17,27 @@ OPTIONAL MATCH (f)-[:REMOVED_IN]->(r:Commit)
 WITH f, anc, collect(r.id) AS rs
 WHERE none(x IN rs WHERE x IN anc)
 RETURN DISTINCT f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key,
-       f.confidence AS confidence, f.agent_id AS agent_id
+       f.confidence AS confidence, f.agent_id AS agent_id, f.created_at AS created_at
+ORDER BY key
+```
+
+## `checkout_commit`
+
+Same as checkout, but at an arbitrary commit $commit (merge base, past state) instead of a branch HEAD:
+facts added in an ancestor (or the commit itself) and not removed in one.
+Uses the immutable Commit.ancestors list instead of a PARENT* walk (no path blow-up on merges).
+FalkorDB has no EXISTS {} subqueries, hence OPTIONAL MATCH + none().
+
+```cypher
+MATCH (h:Commit {id: $commit})
+WITH h.ancestors + [h.id] AS anc
+MATCH (f:Fact)-[:ADDED_IN]->(c:Commit)
+WHERE c.id IN anc
+OPTIONAL MATCH (f)-[:REMOVED_IN]->(r:Commit)
+WITH f, anc, collect(r.id) AS rs
+WHERE none(x IN rs WHERE x IN anc)
+RETURN DISTINCT f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key,
+       f.confidence AS confidence, f.agent_id AS agent_id, f.created_at AS created_at
 ORDER BY key
 ```
 
@@ -57,18 +77,32 @@ RETURN DISTINCT f.id AS id, f.key AS key, f.o AS o
 ORDER BY key
 ```
 
+## `commit_ancestors`
+
+The immutable ancestor id list of commit $commit (empty for the root). revert uses it to check that the
+commit being reverted is actually on the branch history, without walking PARENT edges.
+
+```cypher
+MATCH (h:Commit {id: $commit})
+RETURN h.ancestors AS ancestors
+```
+
 ## `commit_cas`
 
 Atomic compare-and-set commit (M15: one query = one transaction).
 Moves HEAD only if it still points at $expected; 0 rows back = HEAD moved, caller rebases + retries.
 Writes the commit, author, session + episodes, facts, procedures, removals and DERIVED_FROM edges together.
+One visible value per key: before adding a fact, any fact with the same key `s|p` that is visible at the
+parent is REMOVED_IN this commit, so a branch view never holds two values for one key. Edges are MERGEd,
+so an explicit `removed` entry for the same fact does not create a duplicate. The request model rejects
+two new facts with the same key in one commit.
 NOTE: use CALL {} unit subqueries, never a bare UNWIND: UNWIND [] drops the row and a successful
 commit would look like a CAS failure (verified on FalkorDB, see docs/research/01-falkordb.md).
 
 ```cypher
 MATCH (b:Branch {name: $branch})-[r:HEAD]->(h:Commit {id: $expected})
 CREATE (n:Commit {id: $id, seq: h.seq + 1, msg: $msg, ts: timestamp(), agent_id: $agent_id,
-                  ancestors: h.ancestors + [h.id]})-[:PARENT]->(h)
+                  kind: $kind, ancestors: h.ancestors + [h.id]})-[:PARENT]->(h)
 DELETE r
 CREATE (b)-[:HEAD]->(n)
 MERGE (a:Agent {id: $agent_id})
@@ -82,6 +116,16 @@ CALL {
   CREATE (ep:Episode {id: e.id, text: e.text, session_id: e.session_id, ts: timestamp()})
   CREATE (s)-[:HAS_TURN]->(ep)
   CREATE (n)-[:FROM_EPISODE]->(ep)
+}
+CALL {
+  WITH n
+  UNWIND $facts AS f
+  MATCH (old:Fact {key: f.s + '|' + f.p})-[:ADDED_IN]->(c:Commit)
+  WHERE c.id IN n.ancestors
+  OPTIONAL MATCH (old)-[:REMOVED_IN]->(r:Commit)
+  WITH n, old, collect(r.id) AS rs
+  WHERE none(x IN rs WHERE x IN n.ancestors)
+  MERGE (old)-[:REMOVED_IN]->(n)
 }
 CALL {
   WITH n
@@ -105,7 +149,7 @@ CALL {
   WITH n
   UNWIND $removed AS rid
   MATCH (x:Fact {id: rid})
-  CREATE (x)-[:REMOVED_IN]->(n)
+  MERGE (x)-[:REMOVED_IN]->(n)
 }
 CALL {
   WITH n
@@ -114,6 +158,20 @@ CALL {
   CREATE (child)-[:DERIVED_FROM]->(parent)
 }
 RETURN n.id AS id, n.seq AS seq
+```
+
+## `commit_changes`
+
+What one commit changed: facts ADDED_IN and facts REMOVED_IN commit $commit, tagged by change type.
+revert needs both halves: the added facts get removed, the removed ones (e.g. the old value a new fact
+replaced) get restored. Not visibility-filtered: the caller intersects with the branch checkout.
+
+```cypher
+MATCH (f:Fact)-[:ADDED_IN]->(:Commit {id: $commit})
+RETURN 'added' AS change, f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key, f.confidence AS confidence
+UNION ALL
+MATCH (f:Fact)-[:REMOVED_IN]->(:Commit {id: $commit})
+RETURN 'removed' AS change, f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key, f.confidence AS confidence
 ```
 
 ## `create_branch`
@@ -136,6 +194,41 @@ Facts that were derived (directly or transitively) from fact $fid. Feeds conflic
 ```cypher
 MATCH (d:Fact)-[:DERIVED_FROM*1..6]->(:Fact {id: $fid})
 RETURN DISTINCT d.id AS id, d.key AS key, d.o AS o, d.agent_id AS agent_id
+```
+
+## `dependents_visible`
+
+Dependents of fact $fid (DERIVED_FROM up to 6 hops) that are still visible at commit $head.
+plan_merge needs this per side: a conflict card shows what each choice would orphan, and latest-wins
+removes the loser's visible dependents. Same visibility rule as checkout (ancestors list + none()).
+
+```cypher
+MATCH (d:Fact)-[:DERIVED_FROM*1..6]->(:Fact {id: $fid})
+MATCH (h:Commit {id: $head})
+WITH d, h.ancestors + [h.id] AS anc
+MATCH (d)-[:ADDED_IN]->(c:Commit)
+WHERE c.id IN anc
+OPTIONAL MATCH (d)-[:REMOVED_IN]->(r:Commit)
+WITH d, anc, collect(r.id) AS rs
+WHERE none(x IN rs WHERE x IN anc)
+RETURN DISTINCT d.id AS id, d.s AS s, d.p AS p, d.o AS o, d.key AS key,
+       d.confidence AS confidence, d.agent_id AS agent_id, d.created_at AS created_at
+ORDER BY key
+```
+
+## `fact_links`
+
+Direct DERIVED_FROM neighbours of fact $fid: `children` derive from it, `parents` it derives from.
+Restoring a fact (merge "keep the base value", revert) creates a fresh copy under a new id; the copy must
+inherit these edges or later merges cannot see what depends on it (and would skip the dependency conflict).
+Read-only. OPTIONAL MATCH + collect keeps the row (with empty lists) when the fact has no links.
+
+```cypher
+MATCH (x:Fact {id: $fid})
+OPTIONAL MATCH (c:Fact)-[:DERIVED_FROM]->(x)
+WITH x, collect(DISTINCT c.id) AS children
+OPTIONAL MATCH (x)-[:DERIVED_FROM]->(p:Fact)
+RETURN children, collect(DISTINCT p.id) AS parents
 ```
 
 ## `fact_lookup`
@@ -180,7 +273,7 @@ WHERE c.id IN anc
 OPTIONAL MATCH (added:Fact)-[:ADDED_IN]->(c)
 WITH c, count(added) AS added
 OPTIONAL MATCH (removed:Fact)-[:REMOVED_IN]->(c)
-RETURN c.id AS id, c.seq AS seq, c.msg AS msg, c.agent_id AS agent_id, c.ts AS ts,
+RETURN c.id AS id, c.seq AS seq, c.msg AS msg, c.agent_id AS agent_id, c.ts AS ts, c.kind AS kind,
        added, count(removed) AS removed
 ORDER BY c.seq DESC, c.ts DESC
 LIMIT $limit
@@ -199,6 +292,160 @@ WHERE c.id IN aa AND c.id IN bb
 RETURN c.id AS id, c.seq AS seq
 ORDER BY c.seq DESC
 LIMIT 1
+```
+
+## `merge_commit`
+
+Atomic merge commit (one query = one transaction). CAS on the target HEAD: 0 rows back = target HEAD
+moved, caller re-diffs and retries. The merge commit has TWO parents (target head, source head) and its
+ancestors are the deduped union of both histories, so checkout (which reads Commit.ancestors) sees the
+union of both branches' facts with no extra work.
+$removed: fact ids the merge decided to hide (REMOVED_IN the merge commit). MERGE, not CREATE, so a fact
+already removed by this commit is not linked twice.
+$resolutions: one map per resolved conflict {key, p, side, base_id, ours_id, theirs_id}; ids may be null
+(a side that did not exist). Each becomes a Conflict node linked to its facts, plus a Precedent counter
+keyed by (predicate, chosen side) that the "learns from your resolutions" feature reads.
+$facts: NewFact maps to create in this commit. Only used to RESTORE a dependency-conflict winner: the other
+side's commits removed the base-valued fact, so the union hides it and choosing it needs a fresh copy.
+Same shape as the facts block in commit_cas, without retiring old values (the loser is in $removed).
+$derived: {child, parent} pairs, same shape as commit_cas. Used with $facts so a restored copy inherits the
+original's lineage in both directions (its dependents now also derive from the copy, and the copy derives
+from the original's parents). Runs after the facts block so the copy exists when the edges are matched.
+NOTE: CALL {} unit subqueries, never a bare UNWIND: UNWIND [] drops the row and fakes a CAS failure.
+
+```cypher
+MATCH (b:Branch {name: $target})-[r:HEAD]->(ht:Commit {id: $expected_target})
+MATCH (hs:Commit {id: $source_head})
+CREATE (n:Commit {id: $id, kind: 'merge', msg: $msg, ts: timestamp(), agent_id: $agent_id,
+                  seq: CASE WHEN ht.seq > hs.seq THEN ht.seq ELSE hs.seq END + 1,
+                  ancestors: list.dedup(ht.ancestors + hs.ancestors + [ht.id, hs.id])})
+CREATE (n)-[:PARENT]->(ht)
+CREATE (n)-[:PARENT]->(hs)
+DELETE r
+CREATE (b)-[:HEAD]->(n)
+MERGE (a:Agent {id: $agent_id})
+CREATE (a)-[:AUTHORED]->(n)
+WITH n
+CALL {
+  WITH n
+  UNWIND $removed AS rid
+  MATCH (x:Fact {id: rid})
+  MERGE (x)-[:REMOVED_IN]->(n)
+}
+CALL {
+  WITH n
+  UNWIND $facts AS f
+  CREATE (:Fact {id: f.id, s: f.s, p: f.p, o: f.o, key: f.s + '|' + f.p, confidence: f.confidence,
+                 agent_id: n.agent_id, created_at: timestamp()})-[:ADDED_IN]->(n)
+}
+CALL {
+  WITH n
+  UNWIND $derived AS d
+  MATCH (child:Fact {id: d.child}), (parent:Fact {id: d.parent})
+  CREATE (child)-[:DERIVED_FROM]->(parent)
+}
+CALL {
+  WITH n
+  UNWIND $resolutions AS r
+  CREATE (cf:Conflict {key: r.key, status: 'resolved', side: r.side, ts: timestamp()})-[:RESOLVED_IN]->(n)
+  WITH cf, r
+  OPTIONAL MATCH (ours:Fact {id: r.ours_id})
+  OPTIONAL MATCH (theirs:Fact {id: r.theirs_id})
+  OPTIONAL MATCH (base:Fact {id: r.base_id})
+  FOREACH (_ IN CASE WHEN ours IS NULL THEN [] ELSE [1] END | CREATE (cf)-[:SIDE_A]->(ours))
+  FOREACH (_ IN CASE WHEN theirs IS NULL THEN [] ELSE [1] END | CREATE (cf)-[:SIDE_B]->(theirs))
+  FOREACH (_ IN CASE WHEN base IS NULL THEN [] ELSE [1] END | CREATE (cf)-[:BASE]->(base))
+  MERGE (pr:Precedent {key_pattern: r.p, choice: r.side})
+  ON CREATE SET pr.count = 1
+  ON MATCH SET pr.count = pr.count + 1
+  CREATE (cf)-[:RESOLVED_BY]->(pr)
+}
+RETURN n.id AS id, n.seq AS seq
+```
+
+## `precedent_lookup`
+
+Most-chosen past resolution for predicate $p (a (:Precedent) is saved on every human resolution).
+plan_merge shows it on the conflict card as a suggestion; it never decides anything.
+
+```cypher
+MATCH (pr:Precedent {key_pattern: $p})
+RETURN pr.choice AS choice, pr.count AS count
+ORDER BY pr.count DESC
+LIMIT 1
+```
+
+## `rules`
+
+All merge rules: predicate -> strategy. Read by the merge engine to classify a conflicting key.
+
+```cypher
+MATCH (r:Rule)
+RETURN r.p AS p, r.strategy AS strategy
+```
+
+## `scorecard`
+
+Live counts for the demo scorecard, in ONE read query so the whole thing is a single measurable round trip.
+Each `CALL {}` ends in an aggregation, which always yields one row, so an empty graph returns zeros
+instead of zero rows (chained MATCH ... WITH would drop the row). `commits` counts every commit that has a
+`kind` (commit, merge, revert, handoff, seed) and so excludes the kind-less root created by `init`.
+`facts_on_main` / `procedures_on_main` use the standard visibility rule (see `checkout`).
+`precedents_reused` = how many resolutions were answered by an existing precedent (count - 1 per node).
+
+```cypher
+CALL { MATCH (e:Episode) RETURN count(e) AS episodes }
+CALL { MATCH (s:Session) RETURN count(s) AS sessions }
+CALL {
+  MATCH (:Branch {name: 'main'})-[:HEAD]->(h:Commit)
+  WITH h.ancestors + [h.id] AS anc
+  MATCH (f:Fact)-[:ADDED_IN]->(c:Commit)
+  WHERE c.id IN anc
+  OPTIONAL MATCH (f)-[:REMOVED_IN]->(r:Commit)
+  WITH f, anc, collect(r.id) AS rs
+  WHERE none(x IN rs WHERE x IN anc)
+  RETURN count(DISTINCT f) AS facts_on_main
+}
+CALL {
+  MATCH (:Branch {name: 'main'})-[:HEAD]->(h:Commit)
+  WITH h.ancestors + [h.id] AS anc
+  MATCH (pr:Procedure)-[:ADDED_IN]->(c:Commit)
+  WHERE c.id IN anc
+  OPTIONAL MATCH (pr)-[:REMOVED_IN]->(r:Commit)
+  WITH pr, anc, collect(r.id) AS rs
+  WHERE none(x IN rs WHERE x IN anc)
+  RETURN count(DISTINCT pr) AS procedures_on_main
+}
+CALL {
+  MATCH (c:Commit)
+  WHERE c.kind IS NOT NULL
+  RETURN count(c) AS commits,
+         sum(CASE WHEN c.kind = 'merge' THEN 1 ELSE 0 END) AS merges,
+         sum(CASE WHEN c.kind = 'revert' THEN 1 ELSE 0 END) AS reverts,
+         sum(CASE WHEN c.kind = 'handoff' THEN 1 ELSE 0 END) AS handoffs
+}
+CALL { MATCH (cf:Conflict {status: 'resolved'}) RETURN count(cf) AS conflicts_resolved }
+CALL {
+  MATCH (p:Precedent)
+  WHERE p.count > 1
+  RETURN coalesce(sum(p.count - 1), 0) AS precedents_reused
+}
+CALL { MATCH (a:Agent) RETURN count(a) AS agents }
+RETURN episodes, sessions, facts_on_main, procedures_on_main, commits, merges, reverts, handoffs,
+       conflicts_resolved, precedents_reused, agents
+```
+
+## `seed_rules`
+
+Seed the per-predicate merge rules (Rule nodes) for a tenant graph. Idempotent: ON CREATE only, so a
+human-edited strategy survives a re-init. Rules live in the graph so the merge decision stays a query
+over data, not hard-coded Python.
+
+```cypher
+UNWIND $rules AS r
+MERGE (x:Rule {p: r.p})
+ON CREATE SET x.strategy = r.strategy
+RETURN count(x) AS rules
 ```
 
 ## `why_path`

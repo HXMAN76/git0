@@ -7,7 +7,7 @@ WHERE c.id IN anc
 OPTIONAL MATCH (added:Fact)-[:ADDED_IN]->(c)
 WITH c, count(added) AS added
 OPTIONAL MATCH (removed:Fact)-[:REMOVED_IN]->(c)
-RETURN c.id AS id, c.seq AS seq, c.msg AS msg, c.agent_id AS agent_id, c.ts AS ts,
+RETURN c.id AS id, c.seq AS seq, c.msg AS msg, c.agent_id AS agent_id, c.ts AS ts, c.kind AS kind,
        added, count(removed) AS removed
 ORDER BY c.seq DESC, c.ts DESC
 LIMIT $limit
