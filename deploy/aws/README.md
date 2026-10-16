@@ -22,10 +22,14 @@ deploy/aws/setup.sh status       # URL, instance, SSM agent, CloudFront, /api/he
 ```
 Resource ids land in `deploy/aws/membranch.state` (gitignored), so re-running `infra` is safe. **Don't commit that file or `membranch.env`.**
 
+## Live
+https://15-252-11-70.sslip.io (Elastic IP 15.252.11.70, instance in `membranch.state`).
+
 ## Day-to-day
 - Merge to `main` → CI green → `deploy-aws` rolls out automatically. Manual: Actions → deploy-aws → Run workflow.
 - Shell on the host: `aws ssm start-session --target <INSTANCE_ID> --profile membranch`, then `cd /opt/membranch && sudo docker compose logs -f api`.
 - Roll back: Actions → deploy-aws → re-run an older successful run (it redeploys that commit's image).
+- `Not authorized to perform sts:AssumeRoleWithWebIdentity` in the deploy: run `deploy/aws/setup.sh oidc` (e.g. after a repo rename)
 - Rotate an LLM key: `deploy/aws/setup.sh llm-secrets`, then re-run the deploy.
 
 ## Phase 0 checks (Person D)
