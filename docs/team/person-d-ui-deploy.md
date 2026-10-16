@@ -1,4 +1,4 @@
-# Person D: API + UI + deploy + video
+# Person D: API + UI + deploy + video, Sai Nivedh (@SaiNivedh26)
 
 **You own:** `src/membranch/api/`, `web/`, `Dockerfile`, `deploy/gcp/`, the demo video. **Buddy reviewer:** C.
 **Your output is the 60-second judge flow (M11).** Deploy on day 1, not at the end.

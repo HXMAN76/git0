@@ -1,13 +1,20 @@
-# Replace @handles with the teammates' GitHub usernames (see docs/team/README.md).
-/cypher/                 @PERSON_A
-/src/membranch/core/     @PERSON_A
-/src/membranch/llm/      @PERSON_B
-/src/membranch/agents/   @PERSON_B
-/src/membranch/mcp/      @PERSON_B
-/bench/                  @PERSON_C
-/scripts/                @PERSON_C
-/src/membranch/api/      @PERSON_D
-/web/                    @PERSON_D
-/Dockerfile              @PERSON_D
-/deploy/                 @PERSON_D
+# Owner first, review buddy second (A <-> B, C <-> D). Either can review/merge, so work can be swapped
+# without blocking. Roles: docs/team/README.md
+# A = Hari Heman V K (@HXMAN76) · B = Roshan T (@Git-Roshan09) · C = Raghav N (@Rag-795) · D = Sai Nivedh (@SaiNivedh26)
+*                        @HXMAN76
+/cypher/                 @HXMAN76 @Git-Roshan09
+/src/membranch/core/     @HXMAN76 @Git-Roshan09
+/tests/core/             @HXMAN76 @Git-Roshan09
+/src/membranch/llm/      @Git-Roshan09 @HXMAN76
+/src/membranch/agents/   @Git-Roshan09 @HXMAN76
+/src/membranch/mcp/      @Git-Roshan09 @HXMAN76
+/tests/llm/              @Git-Roshan09 @HXMAN76
+/tests/agents/           @Git-Roshan09 @HXMAN76
+/bench/                  @Rag-795 @SaiNivedh26
+/scripts/                @Rag-795 @SaiNivedh26
+/src/membranch/api/      @SaiNivedh26 @Rag-795
+/tests/api/              @SaiNivedh26 @Rag-795
+/web/                    @SaiNivedh26 @Rag-795
+/Dockerfile              @SaiNivedh26 @Rag-795
+/deploy/                 @SaiNivedh26 @HXMAN76
 /.github/                @HXMAN76

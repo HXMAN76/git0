@@ -48,6 +48,9 @@ _Coming in Phase 3: Membranch vs last-write-wins vs text-git across 30 scenarios
 | `src/membranch/api/`, `web/` | FastAPI + React UI | D |
 | `docs/` | architecture, stack, phases, team split, git workflow, research, ADRs | all |
 
+## Team
+Hari Heman V K (graph core) · Roshan T (agents + LLM) · Raghav N (benchmark) · Sai Nivedh (UI, API, deploy)
+
 ## Team docs
 [Team split](docs/team/README.md) · [Phases & gates](docs/PHASES.md) · [Git workflow](docs/GIT_WORKFLOW.md) · [Stack](docs/STACK.md) · [Architecture](docs/ARCHITECTURE.md)
 

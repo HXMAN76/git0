@@ -1,15 +1,27 @@
 # Team split (4 people)
 
-Fill in names and GitHub handles, then replace `@PERSON_X` in `.github/CODEOWNERS`.
+Official owners (for the submission and CODEOWNERS). In practice we swap work when someone is blocked or ahead. See **Swapping work** below.
 
 | Role | Name / GitHub | Owns (code) | Review buddy | One-line mission |
 |-|-|-|-|-|
-| **A: Graph core** | | `cypher/`, `src/membranch/core/` | B | Make every git verb one fast, correct Cypher query. The "original FalkorDB implementation" judges read |
-| **B: Agents + LLM** | | `src/membranch/llm/`, `agents/`, `mcp/` | A | Agents that only know what `checkout` tells them, plus a deterministic merge they can explain |
-| **C: Bench + concurrency** | | `bench/`, `scripts/`, README results | D | Measured proof: "LWW silently lost X%, Membranch lost 0" |
-| **D: UI + API + deploy** | | `src/membranch/api/`, `web/`, `Dockerfile`, `deploy/gcp/` | C | A judge who opens the link reaches the conflict card in 60 seconds |
+| **A: Graph core** | Hari Heman V K · [@HXMAN76](https://github.com/HXMAN76) | `cypher/`, `src/membranch/core/` | B | Make every git verb one fast, correct Cypher query. The "original FalkorDB implementation" judges read |
+| **B: Agents + LLM** | Roshan T · [@Git-Roshan09](https://github.com/Git-Roshan09) | `src/membranch/llm/`, `agents/`, `mcp/` | A | Agents that only know what `checkout` tells them, plus a deterministic merge they can explain |
+| **C: Bench + concurrency** | Raghav N · [@Rag-795](https://github.com/Rag-795) | `bench/`, `scripts/`, README results | D | Measured proof: "LWW silently lost X%, Membranch lost 0" |
+| **D: UI + API + deploy** | Sai Nivedh · [@SaiNivedh26](https://github.com/SaiNivedh26) | `src/membranch/api/`, `web/`, `Dockerfile`, `deploy/` | C | A judge who opens the link reaches the conflict card in 60 seconds |
+
+"winplan §N" in these docs = [`docs/plan/WINPLAN.md`](../plan/WINPLAN.md) (judge flow §8, video script §9, benchmark §7).
 
 Docs per person: [A](person-a-graph-core.md) · [B](person-b-agents-llm.md) · [C](person-c-bench-concurrency.md) · [D](person-d-ui-deploy.md). Shared: [ARCHITECTURE](../ARCHITECTURE.md) · [PHASES](../PHASES.md) · [GIT_WORKFLOW](../GIT_WORKFLOW.md) · [STACK](../STACK.md).
+
+## Swapping work (we cut each other slack)
+Roles are the official split, not walls. When someone is blocked, sick, or ahead:
+1. **Say it in the channel** ("I'll take #13 from Roshan"), then move the issue: `gh issue edit 13 --add-assignee @me --remove-assignee Git-Roshan09`.
+2. **Read the owner's `person-*.md`** for that task first. It lists the contract, the test that proves it, and the gotchas.
+3. **The original owner reviews the PR.** That's how knowledge flows back. CODEOWNERS lists owner + buddy for every area, so either can approve.
+4. **Contracts don't move silently.** Changing `core/models.py`, stub signatures, API routes or the scenario schema still needs every consumer tagged.
+5. **M14 still applies.** Before the video, each of us can explain the graph model, the core queries and the deploy. The 12:00 walkthrough on Oct 18 is where we check that.
+
+Natural swap pairs (overlapping context): **A↔B** (graph ↔ agents share `MemoryRepo`), **C↔D** (bench ↔ API share the load-test endpoint and README), **D↔A** for deploy (both have run `deploy/aws/setup.sh`).
 
 ## Dependency graph between people
 ```

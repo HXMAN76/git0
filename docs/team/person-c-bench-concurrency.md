@@ -1,4 +1,4 @@
-# Person C: Benchmark + concurrency + write-up
+# Person C: Benchmark + concurrency + write-up, Raghav N (@Rag-795)
 
 **You own:** `bench/`, `scripts/`, the README results section, the blog post. **Buddy reviewer:** D.
 **Your output is the headline number in the video.** Lethe won with a benchmark, so ours must be reproducible offline from the repo.

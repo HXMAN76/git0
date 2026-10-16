@@ -1,4 +1,4 @@
-# Person A: Graph core (Cypher)
+# Person A: Graph core (Cypher), Hari Heman V K (@HXMAN76)
 
 **You own:** `cypher/*.cypher`, `src/membranch/core/`, `tests/core/`. **Buddy reviewer:** B.
 **Your output is what judges call "the original FalkorDB implementation".** Every query must be explainable, measured and listed in `docs/CYPHER.md`.
