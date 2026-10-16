@@ -22,7 +22,7 @@ Goal: everyone runs the stack locally, the deploy pipeline is live, contracts ar
 | B | Get Groq + Gemini keys. Record real free-tier limits in `docs/research/02-llm.md` | Keys in each `.env`, numbers recorded |
 | C | Create `bench/` skeleton (scenario schema) | `bench/README.md` merged |
 | D | Railway project: FalkorDB template + api service from `main`. Hello page live | `/api/health` returns ok on the public URL |
-| Lead | GitHub repo, branch protection, labels, milestones, issues from this file | Board populated |
+| Lead | Invite the 3 teammates to the private repo (`gh api -X PUT repos/HXMAN76/membranch/collaborators/<user>`), fill names in `docs/team/README.md` + CODEOWNERS | Everyone can push branches |
 
 **Gate G0:** live URL `/api/health` ok · CI green on `main` · 4 people ran tests locally.
 
@@ -72,6 +72,7 @@ Goal: the 60-second judge flow (M11) works end to end.
 | 12:00-12:15 | 15-min walkthrough: every teammate explains model + queries (M14) |
 | 12:15-14:00 | Record the 3-min video (script in the winplan §9). D drives, C narrates numbers |
 | 14:00-17:00 | Fix only what the recording exposed. README final pass. `docs/CYPHER.md` regenerated. AI disclosure |
+| 17:00 | Make the repo public (required for submission) + re-run `scripts/github_setup.sh HXMAN76/membranch` for branch protection |
 | 17:00-19:00 | Fresh-clone test: a teammate follows the README from zero. Live URL check from a phone |
 | **≤ 20:00** | Submit (repo, video, live URL, Track 02 + Track 03, AI disclosure). Blog post published |
 

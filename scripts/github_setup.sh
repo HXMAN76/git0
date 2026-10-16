@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # One-time GitHub setup: labels, phase milestones, Phase 0-2 issues, branch protection on main.
-# Usage: scripts/github_setup.sh OWNER/REPO      (repo must exist and be public for free protection)
+# Usage: scripts/github_setup.sh OWNER/REPO [--no-protect]
+#   Branch protection needs a public repo (or GitHub Pro/Team). Pass --no-protect for a private repo on free.
 set -euo pipefail
-REPO="${1:?usage: $0 OWNER/REPO}"
+REPO="${1:?usage: $0 OWNER/REPO [--no-protect]}"
+PROTECT=1
+[[ "${2:-}" == "--no-protect" ]] && PROTECT=0
 
 echo "== labels"
 while IFS='|' read -r name color desc; do
@@ -50,8 +53,9 @@ issue "P2 Hero flow" B "must-have" "Scheduler + Notes agents, derived tasks, Arb
 issue "P2 Hero flow" C "must-have" "30 scenarios + 20-writer load test + metrics JSON" "M6, M8."
 issue "P2 Hero flow" D "must-have" "ChatPanel, ConflictCard, WhyPath, Scorecard wired" "M3, M5, M11."
 
-echo "== branch protection on main (required checks: backend, web)"
 gh repo edit "$REPO" --default-branch main >/dev/null
+if [[ $PROTECT == 0 ]]; then echo "== skipping branch protection (--no-protect)"; echo "done: https://github.com/$REPO"; exit 0; fi
+echo "== branch protection on main (required checks: backend, web)"
 gh api -X PUT "repos/$REPO/branches/main/protection" --input - >/dev/null <<'JSON'
 {
   "required_status_checks": { "strict": true, "contexts": ["backend", "web"] },
