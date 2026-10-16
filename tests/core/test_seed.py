@@ -1,4 +1,6 @@
-from git0.seed import seed
+import asyncio
+
+from git0.seed import seed, seed_main
 
 
 async def test_seed_twice_is_idempotent(repo):
@@ -26,3 +28,41 @@ async def test_scheduler_dependents_of_launch_deadline(repo):
         "seed-invites-status",
         "seed-venue-status",
     ]
+
+
+async def test_seed_completes_room_when_branches_precreated(repo):
+    # main already holds the launch facts; planner and scheduler exist but carry no seed facts
+    await seed_main(repo)
+    await repo.create_branch("planner", from_branch="main")
+    await repo.create_branch("scheduler", from_branch="main")
+
+    summary = await seed(repo)
+
+    assert summary["created"] is True
+    assert summary["facts_on_main"] == 37
+    assert summary["facts_on_scheduler"] == 40
+
+
+async def test_seed_after_main_only_does_not_duplicate_main(repo):
+    await seed_main(repo)
+
+    summary = await seed(repo)
+
+    assert summary["created"] is True
+    assert summary["facts_on_main"] == 37
+    assert summary["facts_on_scheduler"] == 40
+    # init root + the one seed commit: the retry must not re-commit main
+    assert len(await repo.log("main")) == 2
+    assert len({f.id for f in await repo.checkout("main")}) == 37
+
+
+async def test_concurrent_seeds_end_with_full_room(repo):
+    results = await asyncio.gather(seed(repo), seed(repo), return_exceptions=True)
+
+    # a losing racer may raise ValueError (branch created first by the other call); the room must be whole
+    errors = [r for r in results if isinstance(r, BaseException)]
+    assert len(errors) <= 1 and all(isinstance(e, ValueError) for e in errors)
+    assert len(await repo.checkout("main")) == 37
+    assert len(await repo.checkout("scheduler")) == 40
+    deps = await repo.dependents_visible("seed-launch-deadline", await repo.head("scheduler"))
+    assert len(deps) == 3

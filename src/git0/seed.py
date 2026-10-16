@@ -9,6 +9,7 @@ from git0.core.repo import MemoryRepo
 
 BRANCHES = ["main", "planner", "scheduler"]
 LAUNCH_DEADLINE = "seed-launch-deadline"
+VENUE_STATUS = "seed-venue-status"
 KICKOFF = "Kickoff: launch plan"
 SCHEDULE = "Book the venue and send invites for Friday"
 
@@ -70,13 +71,22 @@ def _fact_id(entity: str, predicate: str) -> str:
 
 
 async def seed(repo: MemoryRepo) -> dict:
+    """Complete the room step by step. Each step runs only if its result is missing, so a retry
+    after a partial failure finishes the room instead of duplicating or erroring on it."""
     await repo.init()
-    try:
-        await repo.head("scheduler")
-        created = False
-    except KeyError:
-        # The scheduler branch is what marks a seeded room, so a second call writes nothing.
-        await _write_room(repo)
+    created = False
+    if LAUNCH_DEADLINE not in await _visible_ids(repo, "main"):
+        await seed_main(repo)
+        created = True
+    for name in ("planner", "scheduler"):
+        try:
+            await repo.head(name)
+        except KeyError:
+            await repo.create_branch(name, from_branch="main")
+            created = True
+    # Written last: the venue fact only exists once the whole scheduler commit landed.
+    if VENUE_STATUS not in await _visible_ids(repo, "scheduler"):
+        await _seed_scheduler(repo)
         created = True
     return {
         "created": created,
@@ -86,7 +96,12 @@ async def seed(repo: MemoryRepo) -> dict:
     }
 
 
-async def _write_room(repo: MemoryRepo) -> None:
+async def _visible_ids(repo: MemoryRepo, branch: str) -> set[str]:
+    return {f.id for f in await repo.checkout(branch)}
+
+
+async def seed_main(repo: MemoryRepo) -> None:
+    """The one main commit: all 37 launch facts. Public so tests can build a half-seeded room."""
     await repo.commit(
         CommitRequest(
             branch="main",
@@ -97,8 +112,9 @@ async def _write_room(repo: MemoryRepo) -> None:
             episodes=[Episode(id="seed-ep-main", text=KICKOFF, session_id="seed")],
         )
     )
-    await repo.create_branch("planner", from_branch="main")
-    await repo.create_branch("scheduler", from_branch="main")
+
+
+async def _seed_scheduler(repo: MemoryRepo) -> None:
     await repo.commit(
         CommitRequest(
             branch="scheduler",

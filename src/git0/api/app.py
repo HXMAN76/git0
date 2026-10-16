@@ -1,5 +1,6 @@
 """FastAPI app (Person D owns routes/UI wiring; Person A owns the repo calls behind them)."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -54,12 +55,20 @@ async def init_tenant(tenant: str) -> dict:
     return {"tenant": tenant, "head": await repo.head("main")}
 
 
+_seed_locks: dict[str, asyncio.Lock] = {}
+
+
 @app.post("/api/{tenant}/seed")
 async def seed_tenant(tenant: str) -> dict:
     repo = await repo_for(tenant)
-    await repo.init()  # schema indexes need the graph to exist, so init before ensure_schema
-    await ensure_schema(repo.graph)
-    return await seed(repo)
+    # One seed per tenant at a time: concurrent seeds race on the same branch and commit steps.
+    async with _seed_locks.setdefault(tenant, asyncio.Lock()):
+        try:
+            summary = await seed(repo)  # seed() creates the graph, so indexes come after it
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        await ensure_schema(repo.graph)
+    return summary
 
 
 @app.post("/api/{tenant}/branches/{name}")
