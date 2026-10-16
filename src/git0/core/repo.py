@@ -13,6 +13,15 @@ class CommitConflictError(RuntimeError):
     """HEAD kept moving and the CAS commit could not land within the retry budget."""
 
 
+# Per-predicate merge strategy. Seeded into the graph (ON CREATE only) so humans can edit it later.
+DEFAULT_RULES: dict[str, str] = {
+    **dict.fromkeys(
+        ["deadline", "owner", "budget", "decision", "location", "depends_on", "contact"], "needs-review"
+    ),
+    **dict.fromkeys(["preference", "status"], "latest-wins"),
+}
+
+
 def new_id() -> str:
     return uuid.uuid4().hex[:12]
 
@@ -28,6 +37,11 @@ class MemoryRepo:
 
     async def init(self) -> None:
         await self.graph.query(Q["init_repo"], {"root_id": new_id()})
+        rules = [{"p": p, "strategy": s} for p, s in DEFAULT_RULES.items()]
+        await self.graph.query(Q["seed_rules"], {"rules": rules})
+
+    async def rules(self) -> dict[str, str]:
+        return {r["p"]: r["strategy"] for r in _rows(await self.graph.ro_query(Q["rules"]))}
 
     async def create_branch(self, name: str, from_branch: str = "main") -> str:
         rows = _rows(await self.graph.query(Q["create_branch"], {"name": name, "from": from_branch}))
@@ -73,6 +87,35 @@ class MemoryRepo:
 
     async def checkout(self, branch: str) -> list[Fact]:
         return [Fact(**r) for r in _rows(await self.graph.ro_query(Q["checkout"], {"branch": branch}))]
+
+    async def checkout_at(self, commit_id: str) -> list[Fact]:
+        """Facts visible at any commit (e.g. a merge base), not only a branch HEAD."""
+        rows = _rows(await self.graph.ro_query(Q["checkout_commit"], {"commit": commit_id}))
+        return [Fact(**r) for r in rows]
+
+    async def try_merge_commit(
+        self,
+        target: str,
+        expected_target: str,
+        source_head: str,
+        removed: list[str],
+        resolutions: list[dict],
+        msg: str,
+        agent_id: str,
+    ) -> Commit | None:
+        """One CAS attempt at a two-parent merge commit on `target`. None = target HEAD != expected_target."""
+        params = {
+            "target": target,
+            "expected_target": expected_target,
+            "source_head": source_head,
+            "id": new_id(),
+            "msg": msg,
+            "agent_id": agent_id,
+            "removed": removed,
+            "resolutions": resolutions,
+        }
+        rows = _rows(await self.graph.query(Q["merge_commit"], params))
+        return Commit(id=rows[0]["id"], seq=rows[0]["seq"]) if rows else None
 
     async def procedures(self, branch: str) -> list[Procedure]:
         rows = _rows(await self.graph.ro_query(Q["checkout_procedures"], {"branch": branch}))

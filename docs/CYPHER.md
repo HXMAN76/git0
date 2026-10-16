@@ -21,6 +21,26 @@ RETURN DISTINCT f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key,
 ORDER BY key
 ```
 
+## `checkout_commit`
+
+Same as checkout, but at an arbitrary commit $commit (merge base, past state) instead of a branch HEAD:
+facts added in an ancestor (or the commit itself) and not removed in one.
+Uses the immutable Commit.ancestors list instead of a PARENT* walk (no path blow-up on merges).
+FalkorDB has no EXISTS {} subqueries, hence OPTIONAL MATCH + none().
+
+```cypher
+MATCH (h:Commit {id: $commit})
+WITH h.ancestors + [h.id] AS anc
+MATCH (f:Fact)-[:ADDED_IN]->(c:Commit)
+WHERE c.id IN anc
+OPTIONAL MATCH (f)-[:REMOVED_IN]->(r:Commit)
+WITH f, anc, collect(r.id) AS rs
+WHERE none(x IN rs WHERE x IN anc)
+RETURN DISTINCT f.id AS id, f.s AS s, f.p AS p, f.o AS o, f.key AS key,
+       f.confidence AS confidence, f.agent_id AS agent_id
+ORDER BY key
+```
+
 ## `checkout_procedures`
 
 Procedural memory visible at the HEAD of $branch (same visibility rule as `checkout`).
@@ -213,6 +233,79 @@ WHERE c.id IN aa AND c.id IN bb
 RETURN c.id AS id, c.seq AS seq
 ORDER BY c.seq DESC
 LIMIT 1
+```
+
+## `merge_commit`
+
+Atomic merge commit (one query = one transaction). CAS on the target HEAD: 0 rows back = target HEAD
+moved, caller re-diffs and retries. The merge commit has TWO parents (target head, source head) and its
+ancestors are the deduped union of both histories, so checkout (which reads Commit.ancestors) sees the
+union of both branches' facts with no extra work.
+$removed: fact ids the merge decided to hide (REMOVED_IN the merge commit). MERGE, not CREATE, so a fact
+already removed by this commit is not linked twice.
+$resolutions: one map per resolved conflict {key, p, side, base_id, ours_id, theirs_id}; ids may be null
+(a side that did not exist). Each becomes a Conflict node linked to its facts, plus a Precedent counter
+keyed by (predicate, chosen side) that the "learns from your resolutions" feature reads.
+NOTE: CALL {} unit subqueries, never a bare UNWIND: UNWIND [] drops the row and fakes a CAS failure.
+
+```cypher
+MATCH (b:Branch {name: $target})-[r:HEAD]->(ht:Commit {id: $expected_target})
+MATCH (hs:Commit {id: $source_head})
+CREATE (n:Commit {id: $id, kind: 'merge', msg: $msg, ts: timestamp(), agent_id: $agent_id,
+                  seq: CASE WHEN ht.seq > hs.seq THEN ht.seq ELSE hs.seq END + 1,
+                  ancestors: list.dedup(ht.ancestors + hs.ancestors + [ht.id, hs.id])})
+CREATE (n)-[:PARENT]->(ht)
+CREATE (n)-[:PARENT]->(hs)
+DELETE r
+CREATE (b)-[:HEAD]->(n)
+MERGE (a:Agent {id: $agent_id})
+CREATE (a)-[:AUTHORED]->(n)
+WITH n
+CALL {
+  WITH n
+  UNWIND $removed AS rid
+  MATCH (x:Fact {id: rid})
+  MERGE (x)-[:REMOVED_IN]->(n)
+}
+CALL {
+  WITH n
+  UNWIND $resolutions AS r
+  CREATE (cf:Conflict {key: r.key, status: 'resolved', side: r.side, ts: timestamp()})-[:RESOLVED_IN]->(n)
+  WITH cf, r
+  OPTIONAL MATCH (ours:Fact {id: r.ours_id})
+  OPTIONAL MATCH (theirs:Fact {id: r.theirs_id})
+  OPTIONAL MATCH (base:Fact {id: r.base_id})
+  FOREACH (_ IN CASE WHEN ours IS NULL THEN [] ELSE [1] END | CREATE (cf)-[:SIDE_A]->(ours))
+  FOREACH (_ IN CASE WHEN theirs IS NULL THEN [] ELSE [1] END | CREATE (cf)-[:SIDE_B]->(theirs))
+  FOREACH (_ IN CASE WHEN base IS NULL THEN [] ELSE [1] END | CREATE (cf)-[:BASE]->(base))
+  MERGE (pr:Precedent {key_pattern: r.p, choice: r.side})
+  ON CREATE SET pr.count = 1
+  ON MATCH SET pr.count = pr.count + 1
+  CREATE (cf)-[:RESOLVED_BY]->(pr)
+}
+RETURN n.id AS id, n.seq AS seq
+```
+
+## `rules`
+
+All merge rules: predicate -> strategy. Read by the merge engine to classify a conflicting key.
+
+```cypher
+MATCH (r:Rule)
+RETURN r.p AS p, r.strategy AS strategy
+```
+
+## `seed_rules`
+
+Seed the per-predicate merge rules (Rule nodes) for a tenant graph. Idempotent: ON CREATE only, so a
+human-edited strategy survives a re-init. Rules live in the graph so the merge decision stays a query
+over data, not hard-coded Python.
+
+```cypher
+UNWIND $rules AS r
+MERGE (x:Rule {p: r.p})
+ON CREATE SET x.strategy = r.strategy
+RETURN count(x) AS rules
 ```
 
 ## `why_path`
