@@ -114,6 +114,9 @@ class Conflict(BaseModel):
     ours: Fact | None
     theirs: Fact | None
     strategy: MergeStrategy
+    # "dependency": values do not collide, but the side that kept the base value gained dependents
+    # (facts derived from it) that the other side's change would leave stale.
+    reason: Literal["value", "dependency"] = "value"
     dependents_ours: list[Fact] = []
     dependents_theirs: list[Fact] = []
     precedent: str | None = None
@@ -143,3 +146,4 @@ class MergeApplied(BaseModel):
     merge_commit: str
     removed: list[str]
     invalidated: list[Fact] = []
+    restored: list[str] = []  # ids of copy facts re-created for a dependency-conflict winner the union hid

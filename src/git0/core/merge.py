@@ -4,6 +4,8 @@ plan_merge(repo, source, target) -> MergeResult
     Reads both heads and the merge base once, indexes each view by Fact.key and classifies every key:
     unchanged, auto-merged (one side changed, or both made the same change), latest-wins (per-predicate
     rule) or a needs-review Conflict that carries both sides' dependents and any past Precedent.
+    A one-sided change is still flagged (reason="dependency") when the other side derived new facts from the
+    value being replaced: they would auto-merge silently and go stale ("merge by meaning").
     Deterministic and read-only, no LLM call (M4).
 
 apply_merge(repo, plan, choices, agent_id, msg) -> MergeApplied
@@ -12,8 +14,8 @@ apply_merge(repo, plan, choices, agent_id, msg) -> MergeApplied
     dependents (the cascade) and the plan's own removals. It also records a Conflict + Precedent per key.
 """
 
-from git0.core.models import Conflict, Fact, MergeApplied, MergeResult, MergeStrategy
-from git0.core.repo import CommitConflictError, MemoryRepo
+from git0.core.models import Conflict, Fact, MergeApplied, MergeResult, MergeStrategy, NewFact
+from git0.core.repo import CommitConflictError, MemoryRepo, new_id
 
 DELETE = "__delete__"  # choice sentinel: drop both sides of a conflict
 
@@ -61,11 +63,15 @@ async def plan_merge(repo: MemoryRepo, source: str, target: str) -> MergeResult:
         if bo == to == so:
             plan.unchanged += 1
         elif to == bo:  # only source changed
+            if b and await _dependency(repo, plan, rules, key, b, t, s, source_changed=True):
+                continue
             if s:
                 plan.auto_merged.append(s)
             if t and b and t.id != b.id:  # a re-committed copy of the base value would outlive the change
                 plan.removals.append(t.id)
         elif so == bo:  # only target changed
+            if b and await _dependency(repo, plan, rules, key, b, t, s, source_changed=False):
+                continue
             if t:
                 plan.auto_merged.append(t)
             if s and b and s.id != b.id:
@@ -85,6 +91,45 @@ async def plan_merge(repo: MemoryRepo, source: str, target: str) -> MergeResult:
     return plan
 
 
+async def _dependency(repo, plan, rules, key, b, t, s, source_changed: bool) -> bool:
+    """One side (X) changed the value, the other (Y) kept the base value. Check Y for dependents it gained.
+
+    Returns True when a needs-review dependency Conflict was appended (caller skips its one-sided handling).
+    Under latest-wins the stale dependents are queued for removal and the caller proceeds as usual.
+    """
+    x, y = (s, t) if source_changed else (t, s)
+    x_head, y_head = (
+        (plan.source_head, plan.target_head) if source_changed else (plan.target_head, plan.source_head)
+    )
+    y_deps = await repo.dependents_visible(y.id, y_head)  # Y's value is the base value, so y exists
+    if not y_deps:
+        return False
+    # Dependents that already existed at the merge base are shared history, not something Y added.
+    at_base = {d.id for d in await repo.dependents_visible(b.id, plan.base_commit)}
+    stale = [d for d in y_deps if d.id not in at_base]
+    if not stale:
+        return False
+    if rules.get(b.p, MergeStrategy.NEEDS_REVIEW) == MergeStrategy.LATEST_WINS:
+        plan.removals += [d.id for d in stale]
+        return False
+    plan.conflicts.append(
+        await _conflict(
+            repo,
+            plan,
+            key,
+            b.p,
+            b,
+            t,
+            s,
+            reason="dependency",
+            stale=stale,
+            stale_is_ours=source_changed,  # Y is the target (ours) when the source changed
+            x_deps=await repo.dependents_visible(x.id, x_head) if x else [],
+        )
+    )
+    return True
+
+
 async def _latest_wins(repo: MemoryRepo, plan: MergeResult, t: Fact | None, s: Fact | None) -> None:
     """Newer fact wins, a deleted side loses, a created_at tie goes to the incoming (source) side."""
     if t and s:
@@ -98,16 +143,25 @@ async def _latest_wins(repo: MemoryRepo, plan: MergeResult, t: Fact | None, s: F
         plan.removals += [d.id for d in await repo.dependents_visible(loser.id, loser_head)]
 
 
-async def _conflict(repo, plan, key, p, b, t, s) -> Conflict:
+async def _conflict(
+    repo, plan, key, p, b, t, s, reason="value", stale=None, stale_is_ours=False, x_deps=None
+) -> Conflict:
+    """Build a Conflict. For "dependency": `stale` = Y's new dependents, `x_deps` = the changed side's."""
     prec = await repo.precedent(p)
+    if reason == "dependency":
+        deps_ours, deps_theirs = (stale, x_deps) if stale_is_ours else (x_deps, stale)
+    else:
+        deps_ours = await repo.dependents_visible(t.id, plan.target_head) if t else []
+        deps_theirs = await repo.dependents_visible(s.id, plan.source_head) if s else []
     return Conflict(
         key=key,
         base=b,
         ours=t,
         theirs=s,
         strategy=MergeStrategy.NEEDS_REVIEW,
-        dependents_ours=await repo.dependents_visible(t.id, plan.target_head) if t else [],
-        dependents_theirs=await repo.dependents_visible(s.id, plan.source_head) if s else [],
+        reason=reason,
+        dependents_ours=deps_ours,
+        dependents_theirs=deps_theirs,
         precedent=f"{prec[0]} chosen {prec[1]}x" if prec else None,
         precedent_choice=prec[0] if prec else None,
         precedent_count=prec[1] if prec else 0,
@@ -131,6 +185,7 @@ async def apply_merge(
     winners: set[str] = set()
     dependents: dict[str, Fact] = {}
     resolutions = []
+    restore: list[NewFact] = []
     for key, c in by_key.items():
         if key not in choices:
             raise ValueError(f"no choice for conflict {key!r}")
@@ -152,6 +207,12 @@ async def apply_merge(
             dependents.update({f.id: f for f in c.dependents_theirs})
         if side != "delete":
             winners.add(choice)
+            # Dependency conflict, base-valued side wins: the other side's commits REMOVED that fact, so the
+            # merge union hides it. Re-create it as a fresh copy so the chosen value is actually visible. (A
+            # re-committed copy of the base value has its own id, is not hidden, and needs no restoring.)
+            w = c.ours if side == "target" else c.theirs
+            if c.reason == "dependency" and c.base and w.id == c.base.id:
+                restore.append(NewFact(id=new_id(), s=w.s, p=w.p, o=w.o, confidence=w.confidence or 1.0))
         resolutions.append(
             {
                 "key": key,
@@ -173,6 +234,7 @@ async def apply_merge(
         resolutions=resolutions,
         msg=msg or f"merge {plan.source} into {plan.target}",
         agent_id=agent_id,
+        facts=restore,
     )
     if commit is None:  # no silent retry: the human decided on a stale picture
         raise CommitConflictError("target moved since plan; re-plan")
@@ -180,4 +242,5 @@ async def apply_merge(
         merge_commit=commit.id,
         removed=removed,
         invalidated=[f for i, f in dependents.items() if i in removed],
+        restored=[f.id for f in restore],
     )

@@ -52,6 +52,18 @@ async def test_judge_story_choose_planner_cascades_and_learns(repo):
     assert done.merge_commit == await repo.head("main")
     assert await precedents(repo) == [("deadline", "source", 1)]
 
+    # the Conflict node records the side and links the facts it was about
+    node = (
+        await repo.graph.ro_query(
+            "MATCH (c:Conflict)-[:RESOLVED_IN]->(:Commit {id: $m}) "
+            "OPTIONAL MATCH (c)-[:SIDE_A]->(a) OPTIONAL MATCH (c)-[:SIDE_B]->(b) "
+            "OPTIONAL MATCH (c)-[:BASE]->(x) "
+            "RETURN c.side, a.id, b.id, x.id",
+            {"m": done.merge_commit},
+        )
+    ).result_set
+    assert node == [["source", tue.id, mon.id, plan.conflicts[0].base.id]]
+
     # a similar conflict later shows the learned precedent
     await repo.create_branch("late", from_branch="main")
     await commit(repo, "late", "x", facts=[fact("launch", "deadline", "wed")])

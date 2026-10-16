@@ -5,7 +5,7 @@ import uuid
 
 from falkordb.asyncio.graph import AsyncGraph
 
-from git0.core.models import Commit, CommitRequest, Fact, Procedure
+from git0.core.models import Commit, CommitRequest, Fact, NewFact, Procedure
 from git0.core.queries import Q
 
 
@@ -112,8 +112,12 @@ class MemoryRepo:
         resolutions: list[dict],
         msg: str,
         agent_id: str,
+        facts: list[NewFact] | None = None,
     ) -> Commit | None:
-        """One CAS attempt at a two-parent merge commit on `target`. None = target HEAD != expected_target."""
+        """One CAS attempt at a two-parent merge commit on `target`. None = target HEAD != expected_target.
+
+        `facts` are created in the merge commit (used to restore a hidden dependency-conflict winner).
+        """
         params = {
             "target": target,
             "expected_target": expected_target,
@@ -123,6 +127,7 @@ class MemoryRepo:
             "agent_id": agent_id,
             "removed": removed,
             "resolutions": resolutions,
+            "facts": [f.model_dump() for f in facts or []],
         }
         rows = _rows(await self.graph.query(Q["merge_commit"], params))
         return Commit(id=rows[0]["id"], seq=rows[0]["seq"]) if rows else None

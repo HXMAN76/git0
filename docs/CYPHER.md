@@ -266,6 +266,9 @@ already removed by this commit is not linked twice.
 $resolutions: one map per resolved conflict {key, p, side, base_id, ours_id, theirs_id}; ids may be null
 (a side that did not exist). Each becomes a Conflict node linked to its facts, plus a Precedent counter
 keyed by (predicate, chosen side) that the "learns from your resolutions" feature reads.
+$facts: NewFact maps to create in this commit. Only used to RESTORE a dependency-conflict winner: the other
+side's commits removed the base-valued fact, so the union hides it and choosing it needs a fresh copy.
+Same shape as the facts block in commit_cas, without retiring old values (the loser is in $removed).
 NOTE: CALL {} unit subqueries, never a bare UNWIND: UNWIND [] drops the row and fakes a CAS failure.
 
 ```cypher
@@ -286,6 +289,12 @@ CALL {
   UNWIND $removed AS rid
   MATCH (x:Fact {id: rid})
   MERGE (x)-[:REMOVED_IN]->(n)
+}
+CALL {
+  WITH n
+  UNWIND $facts AS f
+  CREATE (:Fact {id: f.id, s: f.s, p: f.p, o: f.o, key: f.s + '|' + f.p, confidence: f.confidence,
+                 agent_id: n.agent_id, created_at: timestamp()})-[:ADDED_IN]->(n)
 }
 CALL {
   WITH n
