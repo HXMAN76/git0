@@ -132,3 +132,14 @@ class MergeResult(BaseModel):
     auto_merged: list[Fact] = []
     conflicts: list[Conflict] = []
     merge_commit: str | None = None  # None while conflicts await review
+
+
+class MergeApplied(BaseModel):
+    """What apply_merge did.
+
+    `invalidated` = dependents removed because their parent lost (the Arbiter re-derives only these).
+    """
+
+    merge_commit: str
+    removed: list[str]
+    invalidated: list[Fact] = []

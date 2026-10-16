@@ -1,23 +1,21 @@
-"""3-way semantic merge (M1, Person A, Phase 2). The hero feature: keep it in Cypher + pure Python.
+"""3-way semantic merge (M1, Person A, Phase 2). Cypher does the graph work; this is pure Python on top.
 
-Contract (agents, API and bench already code against this):
+plan_merge(repo, source, target) -> MergeResult
+    Reads both heads and the merge base once, indexes each view by Fact.key and classifies every key:
+    unchanged, auto-merged (one side changed, or both made the same change), latest-wins (per-predicate
+    rule) or a needs-review Conflict that carries both sides' dependents and any past Precedent.
+    Deterministic and read-only, no LLM call (M4).
 
-    async def plan_merge(repo, source: str, target: str) -> MergeResult
-        1. base = repo.merge_base(source, target)
-        2. checkout base, source and target; index each by Fact.key
-        3. for each key changed since base on exactly one side -> auto_merged
-           changed on both sides to the same value              -> auto_merged (dedupe)
-           changed on both sides to different values            -> Conflict, strategy from (:Rule {p})
-        4. attach dependents (cypher/dependents.cypher) for both sides and any (:Precedent)
-        5. NO LLM call here. The decision is deterministic (M4); the Arbiter LLM only explains.
-
-    async def apply_merge(repo, plan: MergeResult, choices: dict[str, str]) -> str
-        One merge commit (two PARENT edges, ancestors = dedup of both sides) in ONE Cypher query.
-        `choices` maps conflict key -> chosen fact id. Saves a (:Precedent) per resolved key.
+apply_merge(repo, plan, choices, agent_id, msg) -> MergeApplied
+    Turns the human's choices into ONE two-parent merge commit (repo.try_merge_commit). The commit's
+    ancestors already contain both histories, so it only has to REMOVE the losing facts, their
+    dependents (the cascade) and the plan's own removals. It also records a Conflict + Precedent per key.
 """
 
-from git0.core.models import Conflict, Fact, MergeResult, MergeStrategy
-from git0.core.repo import MemoryRepo
+from git0.core.models import Conflict, Fact, MergeApplied, MergeResult, MergeStrategy
+from git0.core.repo import CommitConflictError, MemoryRepo
+
+DELETE = "__delete__"  # choice sentinel: drop both sides of a conflict
 
 
 def _by_key(facts: list[Fact], view: str) -> dict[str, Fact]:
@@ -116,5 +114,70 @@ async def _conflict(repo, plan, key, p, b, t, s) -> Conflict:
     )
 
 
-async def apply_merge(repo: MemoryRepo, plan: MergeResult, choices: dict[str, str]) -> str:
-    raise NotImplementedError("Phase 2 / Person A: see docs/team/person-a-graph-core.md")
+async def apply_merge(
+    repo: MemoryRepo,
+    plan: MergeResult,
+    choices: dict[str, str],
+    agent_id: str = "human",
+    msg: str | None = None,
+) -> MergeApplied:
+    """Commit the merge. `choices` maps conflict key -> chosen fact id (ours.id / theirs.id) or DELETE."""
+    by_key = {c.key: c for c in plan.conflicts}
+    unknown = choices.keys() - by_key.keys()
+    if unknown:
+        raise ValueError(f"choices for keys with no conflict: {sorted(unknown)}")
+
+    removed = list(plan.removals)
+    winners: set[str] = set()
+    dependents: dict[str, Fact] = {}
+    resolutions = []
+    for key, c in by_key.items():
+        if key not in choices:
+            raise ValueError(f"no choice for conflict {key!r}")
+        choice = choices[key]
+        allowed = {f.id for f in (c.ours, c.theirs) if f} | {DELETE}
+        if choice not in allowed:
+            raise ValueError(f"choice {choice!r} for {key!r} is not one of {sorted(allowed)}")
+
+        side = "delete" if choice == DELETE else "target" if c.ours and choice == c.ours.id else "source"
+        # The losers go, and so does everything derived from them on their own branch: it was built on a value
+        # that is no longer true. A kept side's dependents stay.
+        if side != "target":
+            removed += [c.ours.id] if c.ours else []
+            removed += [f.id for f in c.dependents_ours]
+            dependents.update({f.id: f for f in c.dependents_ours})
+        if side != "source":
+            removed += [c.theirs.id] if c.theirs else []
+            removed += [f.id for f in c.dependents_theirs]
+            dependents.update({f.id: f for f in c.dependents_theirs})
+        if side != "delete":
+            winners.add(choice)
+        resolutions.append(
+            {
+                "key": key,
+                "p": key.split("|", 1)[1],  # keys are `subject|predicate`
+                "side": side,
+                "base_id": c.base.id if c.base else None,
+                "ours_id": c.ours.id if c.ours else None,
+                "theirs_id": c.theirs.id if c.theirs else None,
+            }
+        )
+
+    # A winner must survive even if it is also another loser's dependent or was queued for removal.
+    removed = [i for i in dict.fromkeys(removed) if i not in winners]
+    commit = await repo.try_merge_commit(
+        target=plan.target,
+        expected_target=plan.target_head,
+        source_head=plan.source_head,
+        removed=removed,
+        resolutions=resolutions,
+        msg=msg or f"merge {plan.source} into {plan.target}",
+        agent_id=agent_id,
+    )
+    if commit is None:  # no silent retry: the human decided on a stale picture
+        raise CommitConflictError("target moved since plan; re-plan")
+    return MergeApplied(
+        merge_commit=commit.id,
+        removed=removed,
+        invalidated=[f for i, f in dependents.items() if i in removed],
+    )
