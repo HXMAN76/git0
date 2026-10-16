@@ -1,0 +1,13 @@
+# HTTPS front on the EC2 host (ADR 0006). Automatic certificates for SITE_ADDRESS (e.g. 13-232-1-2.sslip.io):
+# Let's Encrypt first, ZeroSSL as fallback (needs the email). sslip.io is not on the Public Suffix List, so LE's
+# 50-certs/week-per-domain limit is shared with everyone; the fallback matters. Certs persist in the caddy-data volume.
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_ADDRESS} {
+	reverse_proxy api:8080 {
+		# stream SSE immediately, never buffer
+		flush_interval -1
+	}
+}

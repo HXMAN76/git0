@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# One-time AWS setup for Membranch (ADR 0006): one EC2 host (FalkorDB + api in compose) behind CloudFront.
+# One-time AWS setup for Membranch (ADR 0006): one EC2 host running Caddy (HTTPS) + api + FalkorDB in compose.
+# Public URL: https://<elastic-ip-dashed>.sslip.io. CloudFront in front is optional (USE_CLOUDFRONT=1, needs a
+# verified account).
 #
 #   cp deploy/aws/membranch.env.example deploy/aws/membranch.env   # fill in
-#   deploy/aws/setup.sh infra         # ECR, SSM params, IAM, security group, EC2 + EIP, CloudFront, GitHub OIDC role
+#   deploy/aws/setup.sh infra         # ECR, SSM params, IAM, security group, EC2 + EIP, [CloudFront], GitHub OIDC role
 #   deploy/aws/setup.sh llm-secrets   # store GROQ/GEMINI keys as SSM SecureStrings (hidden input)
 #   deploy/aws/setup.sh github        # set repo variables + trigger the first deploy (deploy-aws.yml)
 #   deploy/aws/setup.sh budget        # monthly cost budget with email alerts at 50/80/100 %
@@ -17,7 +19,7 @@ STATE="$HERE/membranch.state"
 [[ -f "$ENV_FILE" ]] || { echo "missing $ENV_FILE (copy membranch.env.example)"; exit 1; }
 # shellcheck disable=SC1090
 source "$ENV_FILE"
-: "${AWS_PROFILE:?}" "${REGION:?}" "${GITHUB_REPO:?}" "${INSTANCE_TYPE:=t3.small}"
+: "${AWS_PROFILE:?}" "${REGION:?}" "${GITHUB_REPO:?}" "${INSTANCE_TYPE:=t3.small}" "${USE_CLOUDFRONT:=0}"
 export AWS_PROFILE AWS_REGION="$REGION" AWS_PAGER=""
 touch "$STATE"
 # shellcheck disable=SC1090
@@ -35,6 +37,8 @@ ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 step() { printf '\n== %s\n' "$*"; }
 
 infra() {
+  [[ "${ALERT_EMAIL:-}" =~ ^[^@[:space:]]+@[^@[:space:]]+$ && "$ALERT_EMAIL" != "you@example.com" ]] \
+    || { echo "set ALERT_EMAIL in $ENV_FILE (used for budget alerts and the ACME/TLS account)"; exit 1; }
   read -r -p "Deploy Membranch into AWS account $ACCOUNT (profile $AWS_PROFILE, $REGION)? [y/N] " ok
   [[ "$ok" == "y" ]] || exit 1
 
@@ -64,20 +68,19 @@ infra() {
     \"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"ssm:GetParameter\",\"ssm:GetParameters\"],
     \"Resource\":\"arn:aws:ssm:$REGION:$ACCOUNT:parameter/membranch/*\"}]}"
 
-  step "security group: :80 only from CloudFront origin-facing IPs, nothing else (shell access via SSM)"
+  step "security group: :80/:443 for Caddy (HTTPS + ACME), nothing else (shell access via SSM, no SSH)"
   VPC_ID=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
   [[ "$VPC_ID" != "None" ]] || { echo "no default VPC in $REGION"; exit 1; }
   SG_ID=$(aws ec2 describe-security-groups --filters Name=group-name,Values=$NAME-origin Name=vpc-id,Values="$VPC_ID" \
           --query 'SecurityGroups[0].GroupId' --output text)
   if [[ "$SG_ID" == "None" ]]; then
     SG_ID=$(aws ec2 create-security-group --group-name $NAME-origin --vpc-id "$VPC_ID" \
-            --description "Membranch origin: HTTP from CloudFront only" --query GroupId --output text)
-    PL=$(aws ec2 describe-managed-prefix-lists \
-         --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing \
-         --query 'PrefixLists[0].PrefixListId' --output text)
-    aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
-      --ip-permissions "IpProtocol=tcp,FromPort=80,ToPort=80,PrefixListIds=[{PrefixListId=$PL}]" >/dev/null
+            --description "Membranch origin: HTTP/HTTPS for Caddy" --query GroupId --output text)
   fi
+  for port in 80 443; do  # duplicate-rule errors on re-run are expected and ignored
+    aws ec2 authorize-security-group-ingress --group-id "$SG_ID" --protocol tcp --port $port \
+      --cidr 0.0.0.0/0 >/dev/null 2>&1 || true
+  done
   save SG_ID "$SG_ID"
 
   step "EC2 ($INSTANCE_TYPE, Amazon Linux 2023, IMDSv2, 20 GB gp3) + Elastic IP"
@@ -87,6 +90,7 @@ infra() {
           --query Parameter.Value --output text)
     UD=$(mktemp)
     sed -e "s|__COMPOSE_B64__|$(base64 -w0 "$HERE/compose.prod.yaml")|" \
+        -e "s|__CADDY_B64__|$(base64 -w0 "$HERE/Caddyfile")|" \
         -e "s|__DEPLOY_B64__|$(base64 -w0 "$HERE/host-deploy.sh")|" "$HERE/user-data.tpl.sh" > "$UD"
     INSTANCE_ID=$(aws ec2 run-instances --image-id "$AMI" --instance-type "$INSTANCE_TYPE" \
       --iam-instance-profile Name=$EC2_ROLE --security-group-ids "$SG_ID" --user-data "file://$UD" \
@@ -108,9 +112,14 @@ infra() {
            --query 'Reservations[0].Instances[0].PublicDnsName' --output text)
   [[ -n "$ORIGIN" && "$ORIGIN" != "None" ]] || { echo "instance has no public DNS name"; exit 1; }
   save ORIGIN "$ORIGIN"
+  EIP=$(aws ec2 describe-addresses --allocation-ids "$EIP_ALLOC" --query 'Addresses[0].PublicIp' --output text)
+  SITE="${EIP//./-}.sslip.io"
+  aws ssm put-parameter --name /membranch/site-address --type String --value "$SITE" --overwrite >/dev/null
+  aws ssm put-parameter --name /membranch/acme-email --type String --value "$ALERT_EMAIL" --overwrite >/dev/null
+  save PUBLIC_URL "https://$SITE"
 
-  step "CloudFront (HTTPS *.cloudfront.net, caching off, 60 s origin read timeout for SSE)"
-  if [[ -z "${CF_ID:-}" ]]; then
+  if [[ "$USE_CLOUDFRONT" == 1 && -z "${CF_ID:-}" ]]; then
+    step "CloudFront in front of Caddy (HTTPS origin, caching off, 60 s origin read timeout)"
     CFG=$(mktemp)
     cat > "$CFG" <<JSON
 {
@@ -120,8 +129,8 @@ infra() {
   "PriceClass": "PriceClass_200",
   "HttpVersion": "http2",
   "Origins": {"Quantity": 1, "Items": [{
-    "Id": "ec2", "DomainName": "$ORIGIN",
-    "CustomOriginConfig": {"HTTPPort": 80, "HTTPSPort": 443, "OriginProtocolPolicy": "http-only",
+    "Id": "ec2", "DomainName": "$SITE",
+    "CustomOriginConfig": {"HTTPPort": 80, "HTTPSPort": 443, "OriginProtocolPolicy": "https-only",
       "OriginReadTimeout": 60, "OriginKeepaliveTimeout": 60,
       "OriginSslProtocols": {"Quantity": 1, "Items": ["TLSv1.2"]}}}]},
   "DefaultCacheBehavior": {
@@ -165,7 +174,7 @@ JSON
      {\"Effect\":\"Allow\",\"Action\":[\"ssm:GetCommandInvocation\",\"ssm:ListCommandInvocations\"],\"Resource\":\"*\"}]}"
   save DEPLOY_ROLE_ARN "arn:aws:iam::$ACCOUNT:role/$DEPLOY_ROLE"
 
-  echo; echo "infra ready. CloudFront takes ~5-10 min to deploy. URL: $PUBLIC_URL"
+  echo; echo "infra ready. URL (live after the first deploy): $PUBLIC_URL"
   echo "next: $0 llm-secrets && $0 github"
 }
 
@@ -206,7 +215,7 @@ status() {
                --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null)"
   echo "ssm agent: $(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=${INSTANCE_ID:-none}" \
                --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null)"
-  echo "cloudfront: $(aws cloudfront get-distribution --id "${CF_ID:-none}" --query Distribution.Status --output text 2>/dev/null)"
+  [[ -n "${CF_ID:-}" ]] && echo "cloudfront: $(aws cloudfront get-distribution --id "$CF_ID" --query Distribution.Status --output text 2>/dev/null)"
   [[ -n "${PUBLIC_URL:-}" ]] && curl -fsS --max-time 10 "$PUBLIC_URL/api/health" && echo
 }
 
@@ -214,13 +223,14 @@ teardown() {
   cat <<EOF
 # Run these by hand after judging (in order). Nothing was deleted.
 export AWS_PROFILE=$AWS_PROFILE AWS_REGION=$REGION
-aws cloudfront get-distribution-config --id $CF_ID   # set Enabled=false via update-distribution, wait, then:
-aws cloudfront delete-distribution --id $CF_ID --if-match <ETag>
+# only if USE_CLOUDFRONT=1 created one:
+aws cloudfront get-distribution-config --id ${CF_ID:-none}   # set Enabled=false via update-distribution, wait, then:
+aws cloudfront delete-distribution --id ${CF_ID:-none} --if-match <ETag>
 aws ec2 terminate-instances --instance-ids $INSTANCE_ID
 aws ec2 release-address --allocation-id $EIP_ALLOC
 aws ec2 delete-security-group --group-id $SG_ID
 aws ecr delete-repository --repository-name $ECR_REPO --force
-aws ssm delete-parameters --names /membranch/falkordb-password /membranch/groq-api-key /membranch/gemini-api-key
+aws ssm delete-parameters --names /membranch/falkordb-password /membranch/groq-api-key /membranch/gemini-api-key /membranch/site-address /membranch/acme-email
 aws iam delete-role-policy --role-name $DEPLOY_ROLE --policy-name membranch-deploy && aws iam delete-role --role-name $DEPLOY_ROLE
 EOF
 }

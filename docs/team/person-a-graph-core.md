@@ -21,7 +21,7 @@
 - [ ] `cypher/seed_rules.cypher`: `(:Rule {p, strategy})` for each predicate (deadline/owner/budget/decision = needs-review, preference/status = latest-wins, rest = needs-review)
 - [ ] `cypher/merge_commit.cypher`: CAS on the **target** HEAD, `PARENT` to both heads, `ancestors = list.dedup(ha.ancestors + hb.ancestors + [ha.id, hb.id])`, `seq = max + 1`, plus `CALL {}` blocks for chosen facts / removals. **One query.**
 - [ ] `plan_merge` part 1 in `core/merge.py`: three checkouts → dicts by `key` → classify. Table-driven test with 6 combos (one side changed / both same / both different / added on one side / removed on one side / removed vs changed)
-- [ ] Deploy check (gate G1): on the live CloudFront URL, `POST /api/g1/init`, `POST /api/g1/commits`, `GET .../checkout` and `/log` return the right data (tests aren't shipped in the image, so check through the API)
+- [ ] Deploy check (gate G1): on the live HTTPS URL, `POST /api/g1/init`, `POST /api/g1/commits`, `GET .../checkout` and `/log` return the right data (tests aren't shipped in the image, so check through the API)
 
 ## Phase 2 (→ Oct 17 22:00)
 - [ ] `plan_merge` complete: dependents on both sides (`dependents.cypher`), `Rule` → strategy, precedent lookup (`MATCH (pr:Precedent {key_pattern:$p}) RETURN pr ORDER BY pr.count DESC LIMIT 1`)

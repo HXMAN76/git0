@@ -21,7 +21,7 @@ Goal: everyone runs the stack locally, the deploy pipeline is live, contracts ar
 | A | Walk the team through `cypher/commit_cas.cypher` + `checkout.cypher` | 15-min call |
 | B | Get Groq + Gemini keys. Record real free-tier limits in `docs/research/02-llm.md` | Keys in each `.env`, numbers recorded |
 | C | Create `bench/` skeleton (scenario schema) | `bench/README.md` merged |
-| D + AWS owner | AWS: `deploy/aws/setup.sh infra → llm-secrets → github → budget` (runbook `deploy/aws/README.md`) | `/api/health` ok on the `cloudfront.net` URL. A push to `main` auto-deploys. SSE streams verified with `curl -N` |
+| D + AWS owner | AWS: `deploy/aws/setup.sh infra → llm-secrets → github → budget` (runbook `deploy/aws/README.md`) | `/api/health` ok on the `https://<ip>.sslip.io` URL. A push to `main` auto-deploys. SSE streams verified with `curl -N` |
 | Lead | Invite the 3 teammates to the private repo (`gh api -X PUT repos/HXMAN76/git0/collaborators/<user>`), fill names in `docs/team/README.md` + CODEOWNERS | Everyone can push branches |
 
 **Gate G0:** live URL `/api/health` ok · CI green on `main` · 4 people ran tests locally.

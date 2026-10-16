@@ -32,9 +32,9 @@ Versions are what `uv sync` / `pnpm install` resolved today. Full research with 
 | Piece | Choice | Why |
 |-|-|-|
 | Local DB | `compose.yaml` (podman or docker) | `make db-up` |
-| Deploy | **AWS** (friend's account): one EC2 `t3.small` in ap-south-1 running compose (FalkorDB unpublished + api) behind **CloudFront** (`*.cloudfront.net` HTTPS, caching off). Secrets in SSM Parameter Store ([ADR 0006](adr/0006-deploy-aws.md), runbook `deploy/aws/README.md`) | No domain needed, no cold starts, ~$10 for the week. FalkorDB never public (SG allows CloudFront only). GCP (ADR 0005) and Railway (ADR 0004) are fallbacks |
+| Deploy | **AWS** (friend's account): one EC2 `t3.small` in ap-south-1 running compose (FalkorDB unpublished + api) with **Caddy** auto-HTTPS on `<ip>.sslip.io` (CloudFront optional once AWS verifies the account). Secrets in SSM Parameter Store ([ADR 0006](adr/0006-deploy-aws.md), runbook `deploy/aws/README.md`) | No domain needed, no cold starts, ~$10 for the week. FalkorDB never public (SG opens 80/443 to Caddy only). GCP (ADR 0005) and Railway (ADR 0004) are fallbacks |
 | Image | One Dockerfile: node stage builds `web/dist`, uv stage serves it via FastAPI `StaticFiles` | One URL, no CORS in prod |
-| CD | `.github/workflows/deploy-aws.yml`: after `ci` passes on `main` → build → ECR → SSM Run Command `membranch-deploy <image>` on the host → `/api/health` via CloudFront. Keyless (GitHub OIDC → IAM role) | Inert until `deploy/aws/setup.sh github` sets the repo variables |
+| CD | `.github/workflows/deploy-aws.yml`: after `ci` passes on `main` → build → ECR → SSM Run Command `membranch-deploy <image>` on the host (ships compose + Caddyfile) → `/api/health` over HTTPS. Keyless (GitHub OIDC → IAM role) | Inert until `deploy/aws/setup.sh github` sets the repo variables |
 | CI | GitHub Actions: ruff, Cypher-docs drift check, pytest with a `falkordb/falkordb` service container, web lint/typecheck/test/build | Same commands as `make check` |
 
 ## Integration optimisations (why the repo looks like this)
