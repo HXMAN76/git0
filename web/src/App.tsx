@@ -4,6 +4,9 @@ import { CommitDag } from './components/CommitDag'
 import { MemoryCanvas } from './components/MemoryCanvas'
 import { Scorecard } from './components/Scorecard'
 
+// Until the per-visitor tenant lands (person-d-ui-deploy.md), every view reads the seeded demo room.
+const TENANT = 'demo'
+
 type CenterTab = 'commits' | 'memory'
 
 const CENTER_TABS: { id: CenterTab; label: string }[] = [
@@ -39,7 +42,7 @@ export default function App() {
           ))}
         </div>
         <div role="tabpanel" className="min-h-0 flex-1">
-          {tab === 'commits' ? <CommitDag /> : <MemoryCanvas />}
+          {tab === 'commits' ? <CommitDag /> : <MemoryCanvas tenant={TENANT} />}
         </div>
       </main>
 

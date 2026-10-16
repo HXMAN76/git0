@@ -177,3 +177,33 @@ class RevertResult(BaseModel):
     cascaded: list[str]
     restored: list[str]
     unchanged: int
+
+
+GraphLabel = Literal["Fact", "Commit", "Agent", "Episode"]
+
+
+class GraphNode(BaseModel):
+    """One node of the UI graph view. `id` is the domain id (fact/commit/episode id, agent name), so a
+    why-path row's ids can be highlighted directly. `kind` drives the colour: the predicate for a Fact,
+    the commit kind for a Commit, the label otherwise."""
+
+    id: str
+    label: GraphLabel
+    name: str  # caption drawn on the node
+    kind: str
+    props: dict[str, str | int | float | None] = {}
+
+
+class GraphLink(BaseModel):
+    source: str
+    target: str
+    type: Literal["ADDED_IN", "AUTHORED", "FROM_EPISODE", "DERIVED_FROM"]
+
+
+class GraphView(BaseModel):
+    """Read-only snapshot of a branch's memory graph. `truncated` = more visible facts than `limit`."""
+
+    branch: str
+    nodes: list[GraphNode]
+    links: list[GraphLink]
+    truncated: bool = False
