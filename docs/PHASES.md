@@ -50,7 +50,7 @@ Goal: the 60-second judge flow (M11) works end to end.
 | A | why-path + `fact_lookup` endpoints wired | why-path returns Fact←Commit←Agent←Episode |
 | B | Scheduler + Notes agents. Derived tasks (`derived` edges). Arbiter: explains the conflict, re-invokes only owners of invalidated facts | cached run of the judge script yields the expected commits |
 | B | Handoff: kill Scheduler → new agent checks out its branch, summarises `log` | test asserts the inherited facts list |
-| C | 30 scenarios. 20-writer load test with p50/p95 + retries. Metrics JSON | `make bench` produces all JSON; Membranch lost = 0 |
+| C | 30 scenarios. 20-writer load test with p50/p95 + retries. Metrics JSON | `make bench` produces all JSON; Git0 lost = 0 |
 | D | ChatPanel (SSE), ConflictCard (base/A/B + dependents + who/where), WhyPath highlight, Scorecard from live Cypher counts | manual run of the judge flow on deploy |
 
 **Integration point I2 (Oct 17 16:00):** merge button → conflict card with real data. **I3 (21:00):** full flow rehearsal on the live URL.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time AWS setup for Membranch (ADR 0006): one EC2 host running Caddy (HTTPS) + api + FalkorDB in compose.
+# One-time AWS setup for Git0 (ADR 0006): one EC2 host running Caddy (HTTPS) + api + FalkorDB in compose.
 # Public URL: https://<elastic-ip-dashed>.sslip.io. CloudFront in front is optional (USE_CLOUDFRONT=1, needs a
 # verified account).
 #
@@ -40,7 +40,7 @@ step() { printf '\n== %s\n' "$*"; }
 infra() {
   [[ "${ALERT_EMAIL:-}" =~ ^[^@[:space:]]+@[^@[:space:]]+$ && "$ALERT_EMAIL" != "you@example.com" ]] \
     || { echo "set ALERT_EMAIL in $ENV_FILE (used for budget alerts and the ACME/TLS account)"; exit 1; }
-  read -r -p "Deploy Membranch into AWS account $ACCOUNT (profile $AWS_PROFILE, $REGION)? [y/N] " ok
+  read -r -p "Deploy Git0 into AWS account $ACCOUNT (profile $AWS_PROFILE, $REGION)? [y/N] " ok
   [[ "$ok" == "y" ]] || exit 1
 
   step "ECR repository (scan on push, keep last 10 images)"

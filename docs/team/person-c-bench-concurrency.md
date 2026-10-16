@@ -14,7 +14,7 @@ bench/
   backends/base.py     Protocol: reset(), commit(agent, branch, facts), checkout(agent, branch), merge(src, dst) -> report
   backends/lww.py      baseline 1: one shared dict, last write wins (Mem0-style)
   backends/textgit.py  baseline 2: facts as lines in files + `git merge-file` (newest wins on conflict)
-  backends/membranch.py  MemoryRepo + plan_merge/apply_merge (from A)
+  backends/git0.py  MemoryRepo + plan_merge/apply_merge (from A)
   run.py               python -m bench.run [--scenario x] [--backend y] -> bench/results/<backend>/<scenario>.json
   load.py              20-writer concurrency test -> bench/results/concurrency.json
   report.py            results -> markdown table for README
@@ -45,7 +45,7 @@ silent overwrites · stale facts acted on · conflicts caught/missed (precision,
 
 ## Phase 0-1 (→ Oct 17 10:00)
 - [ ] Scenario schema + 3 scenarios. `backends/base.py` + `lww.py` + `textgit.py`. `run.py` writes JSON
-- [ ] `backends/membranch.py` against the stub: until A's merge lands, mark merges `skipped`, not passed
+- [ ] `backends/git0.py` against the stub: until A's merge lands, mark merges `skipped`, not passed
 
 ## Phase 2 (→ Oct 17 22:00)
 - [ ] 30 scenarios (deadline change, owner swap, budget cut, wrong fact later reverted, concurrent edits, handoff)

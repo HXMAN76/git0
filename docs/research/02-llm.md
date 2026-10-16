@@ -159,7 +159,7 @@ Before coding, do three checks:
 2. Run one strict request against `openai/gpt-oss-20b` with a schema that has your predicate `Literal[...]` enum, to confirm the 400-free path.
 3. Log one outgoing Gemini request and confirm `response_json_schema` is accepted by your installed `google-genai` version.
 
-Sketch, `membranch/llm/client.py` (not run; schema-compatibility and SDK field names need the checks above):
+Sketch, `git0/llm/client.py` (not run; schema-compatibility and SDK field names need the checks above):
 
 ```python
 import hashlib, json, os, threading, time

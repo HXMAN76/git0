@@ -1,6 +1,6 @@
 # Person B: Agents + LLM, Roshan T (@Git-Roshan09)
 
-**You own:** `src/membranch/llm/`, `src/membranch/agents/`, `src/membranch/mcp/`, `tests/llm/`, `tests/agents/`. **Buddy reviewer:** A.
+**You own:** `src/git0/llm/`, `src/git0/agents/`, `src/git0/mcp/`, `tests/llm/`, `tests/agents/`. **Buddy reviewer:** A.
 **Rule M2:** an agent may only learn things through `repo.checkout(branch)` (and `log` for handoff). No module-level state, no passing text between agents. If FalkorDB is down, agents know nothing.
 
 ## Read first
@@ -14,7 +14,7 @@
 
 ## Phase 1 (→ Oct 17 10:00)
 - [ ] `llm/client.py complete_json()`: Groq `response_format={"type":"json_schema","json_schema":{"name":..,"schema":Model.model_json_schema(),"strict":True}}` → Pydantic `model_validate_json` → on API error/timeout fall back to Gemini → on total failure raise `LLMError`. **Never** return a made-up default (M12)
-- [ ] Disk cache: key `sha256(model|system|prompt|schema_json)`, file `LLM_CACHE_DIR/<key>.json` storing output + usage. `MEMBRANCH_LLM_OFFLINE=1` → cache only (bench + CI)
+- [ ] Disk cache: key `sha256(model|system|prompt|schema_json)`, file `LLM_CACHE_DIR/<key>.json` storing output + usage. `GIT0_LLM_OFFLINE=1` → cache only (bench + CI)
 - [ ] `Extraction` schema: `facts: list[NewFact]`, `procedures: list[NewProcedure]` (learned workflows, steps JSON-encoded), `removed_keys: list[str]`, `derived: list[{child_key, parent_key}]`, `reply: str`. Prompt injects the current entity list from checkout ("reuse an id from this list") (M16)
 - [ ] `agents/base.step()` for Planner end to end: checkout → extract → commit (with Episode) → reply with cited fact ids
 - [ ] Tests: cached fixtures in `tests/llm/fixtures/`. One live test marked `@pytest.mark.llm`, skipped without `GROQ_API_KEY`

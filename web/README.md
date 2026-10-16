@@ -1,6 +1,6 @@
-# Membranch web
+# Git0 web
 
-React + TypeScript + Vite frontend for the Membranch hackathon app.
+React + TypeScript + Vite frontend for the Git0 hackathon app.
 
 ## Scripts
 

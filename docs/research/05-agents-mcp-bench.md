@@ -33,7 +33,7 @@ Conflict noted: a second page summary gave pydantic-settings as 2.14.1 and pydan
 Reasoning:
 
 - **The graph must be the only channel between agents.** LangGraph's value is state, reducers and checkpointing. `FalkorDBSaver` (`from langchain_falkordb.checkpoint import FalkorDBSaver`, install `pip install langchain-falkordb[langgraph]`) persists LangGraph thread state in FalkorDB. That creates a second state store next to the memory graph. Judges asking "where does agent B learn what agent A knew?" get a murky answer: the checkpointer also carries it. The plain loop keeps one channel: `checkout(branch)` in, `commit_facts` out.
-- **Judge risk: "framework wrapper".** A LangGraph graph whose nodes just call an LLM and then call Membranch reads as a wrapper around an LLM call. The novelty is the memory VCS; the orchestration should look thin and obvious.
+- **Judge risk: "framework wrapper".** A LangGraph graph whose nodes just call an LLM and then call Git0 reads as a wrapper around an LLM call. The novelty is the memory VCS; the orchestration should look thin and obvious.
 - **Build cost.** LangGraph 1.2.15 brings langchain-core, langgraph-prebuilt, langgraph-sdk and checkpoint packages. Each new abstraction is a debugging surface during a hackathon.
 - **What LangGraph would buy us** (parallel fan-out, interrupts, human-in-the-loop) is not on the critical path. `asyncio.gather` covers fan-out.
 
@@ -57,10 +57,10 @@ Key facts for SDK v2 (mcp 2.3.0, released 2026-10-02):
 Minimal server (tool bodies call the same service layer as REST; no raw Cypher exposed):
 
 ```python
-# membranch/mcp_server.py
+# git0/mcp_server.py
 from mcp.server.mcpserver import MCPServer
 
-mcp = MCPServer("membranch")
+mcp = MCPServer("git0")
 
 
 @mcp.tool()
@@ -98,11 +98,11 @@ if __name__ == "__main__":
 Mount into the existing FastAPI app (same process, one FalkorDB pool, one lifespan):
 
 ```python
-# membranch/api/app.py
+# git0/api/app.py
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from mcp.server.transport_security import TransportSecuritySettings
-from membranch.mcp_server import mcp
+from git0.mcp_server import mcp
 
 mcp_app = mcp.streamable_http_app(
     json_response=True,
@@ -169,7 +169,7 @@ async def agent(i, barrier, g, out):
 async def main():
     pool = BlockingConnectionPool(max_connections=32, timeout=None, decode_responses=True)
     db = FalkorDB(connection_pool=pool)
-    g = db.select_graph("membranch_bench")
+    g = db.select_graph("git0_bench")
     barrier = asyncio.Barrier(20)
     out = Results()
     await asyncio.gather(*(agent(i, barrier, g, out) for i in range(20)))
@@ -218,7 +218,7 @@ The three backends:
 
 1. **LWW dict**: flat `dict[key -> value]`, last-write-wins, no branches (fork = copy). Baseline for "what everyone does today".
 2. **Text-git**: one text file per memory; branches are git branches in a temp repo; merge via `git merge-file -p --diff3 ours base theirs` (subprocess; conflicts reported through exit code and markers). Verified against git-merge-file man page from memory, not fetched in this pass. Python `difflib` does not do 3-way merge, so do not use it for the merge step.
-3. **Membranch graph**: real FalkorDB via docker-compose; the MCP/service layer is called directly.
+3. **Git0 graph**: real FalkorDB via docker-compose; the MCP/service layer is called directly.
 
 Scenario files (YAML, validated by a pydantic model):
 
@@ -254,7 +254,7 @@ bench/
       base.py                     # Protocol
       lww.py
       textgit.py
-      membranch.py
+      git0.py
     scenarios/                    # *.yaml, one per scenario
     runner.py                     # python -m membench.runner --backend all --out results/
     metrics.py
@@ -330,7 +330,7 @@ Key points: each agent commits only to its own branch (CAS rarely fires); `merge
 ### MCP placement
 
 - Mount `streamable_http_app` into the existing FastAPI app at `/` (inner route `/mcp`), with one lifespan entering `mcp.session_manager.run()`. One process, one FalkorDB pool.
-- Add a stdio entrypoint (`python -m membranch.mcp_server`) for editor and Claude-based agents, sharing the same service layer.
+- Add a stdio entrypoint (`python -m git0.mcp_server`) for editor and Claude-based agents, sharing the same service layer.
 - Expose exactly five tools: `checkout`, `commit_facts`, `log`, `merge`, `why`. No raw Cypher. Enforces "checkout is the only read path".
 - Set `TransportSecuritySettings` explicitly to avoid 421s.
 
@@ -340,7 +340,7 @@ Key points: each agent commits only to its own branch (CAS rarely fires); `merge
 bench/
   pyproject.toml
   membench/{models.py, runner.py, metrics.py}
-  membench/backends/{base.py, lww.py, textgit.py, membranch.py}
+  membench/backends/{base.py, lww.py, textgit.py, git0.py}
   membench/scenarios/*.yaml        # scripted agents, deterministic seed
   tests/test_backend_contract.py   # pytest, same tests across 3 backends
   tests/test_concurrency.py        # 20-agent asyncio harness, lost_updates == 0

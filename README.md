@@ -1,4 +1,4 @@
-# Membranch
+# Git0
 
 **Agents get their own memory branches. FalkorDB merges what they learned by meaning, not by text, and every answer shows the commit path it came from.**
 
@@ -36,16 +36,16 @@ All queries live in [`cypher/`](cypher/) and are listed with explanations in [do
 Everything: checkout, commit (CAS), merge-base, conflict detection, revert cascade, why-paths, "not in memory" proofs, tenant isolation and the scorecard are Cypher queries. Agents hold no state between turns.
 
 ## Benchmark
-_Coming in Phase 3: Membranch vs last-write-wins vs text-git across 30 scenarios. Results JSON in `bench/results/`._
+_Coming in Phase 3: Git0 vs last-write-wins vs text-git across 30 scenarios. Results JSON in `bench/results/`._
 
 ## Repo map
 | Path | What | Owner |
 |-|-|-|
 | `cypher/` | every query, single source of truth | A |
-| `src/membranch/core/` | `MemoryRepo`, merge, models (contracts) | A |
-| `src/membranch/llm/`, `agents/`, `mcp/` | LLM client, agents, MCP server | B |
+| `src/git0/core/` | `MemoryRepo`, merge, models (contracts) | A |
+| `src/git0/llm/`, `agents/`, `mcp/` | LLM client, agents, MCP server | B |
 | `bench/` | scenarios, baselines, load test | C |
-| `src/membranch/api/`, `web/` | FastAPI + React UI | D |
+| `src/git0/api/`, `web/` | FastAPI + React UI | D |
 | `docs/` | architecture, stack, phases, team split, git workflow, research, ADRs | all |
 
 ## Team

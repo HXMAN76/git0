@@ -2,9 +2,9 @@ import asyncio
 
 import pytest
 
-from membranch.core.models import CommitRequest, Derivation, Episode, NewFact, NewProcedure
-from membranch.core.queries import Q
-from membranch.core.repo import new_id
+from git0.core.models import CommitRequest, Derivation, Episode, NewFact, NewProcedure
+from git0.core.queries import Q
+from git0.core.repo import new_id
 
 
 def fact(s, p, o, fid=None):

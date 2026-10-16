@@ -19,4 +19,4 @@ RUN uv sync --frozen --no-dev
 COPY --from=web /web/dist ./web/dist
 ENV PATH="/app/.venv/bin:$PATH" PORT=8000
 EXPOSE 8000
-CMD ["sh", "-c", "exec uvicorn membranch.api.app:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "exec uvicorn git0.api.app:app --host 0.0.0.0 --port ${PORT}"]

@@ -4,8 +4,8 @@ import uuid
 import pytest
 from falkordb.asyncio import FalkorDB
 
-from membranch.core.db import ensure_schema
-from membranch.core.repo import MemoryRepo
+from git0.core.db import ensure_schema
+from git0.core.repo import MemoryRepo
 
 FALKORDB_URL = os.environ.get("FALKORDB_URL", "redis://localhost:6379")
 

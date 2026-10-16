@@ -15,7 +15,7 @@ db-down:
 	$(COMPOSE) down
 
 api:            ## FastAPI on :8000 with reload
-	uv run uvicorn membranch.api.app:app --reload --port 8000
+	uv run uvicorn git0.api.app:app --reload --port 8000
 
 web:            ## Vite dev server on :5173 (proxies /api -> :8000)
 	cd web && pnpm dev

@@ -4,10 +4,10 @@ Official owners (for the submission and CODEOWNERS). In practice we swap work wh
 
 | Role | Name / GitHub | Owns (code) | Review buddy | One-line mission |
 |-|-|-|-|-|
-| **A: Graph core** | Hari Heman V K · [@HXMAN76](https://github.com/HXMAN76) | `cypher/`, `src/membranch/core/` | B | Make every git verb one fast, correct Cypher query. The "original FalkorDB implementation" judges read |
-| **B: Agents + LLM** | Roshan T · [@Git-Roshan09](https://github.com/Git-Roshan09) | `src/membranch/llm/`, `agents/`, `mcp/` | A | Agents that only know what `checkout` tells them, plus a deterministic merge they can explain |
-| **C: Bench + concurrency** | Raghav N · [@Rag-795](https://github.com/Rag-795) | `bench/`, `scripts/`, README results | D | Measured proof: "LWW silently lost X%, Membranch lost 0" |
-| **D: UI + API + deploy** | Sai Nivedh · [@SaiNivedh26](https://github.com/SaiNivedh26) | `src/membranch/api/`, `web/`, `Dockerfile`, `deploy/` | C | A judge who opens the link reaches the conflict card in 60 seconds |
+| **A: Graph core** | Hari Heman V K · [@HXMAN76](https://github.com/HXMAN76) | `cypher/`, `src/git0/core/` | B | Make every git verb one fast, correct Cypher query. The "original FalkorDB implementation" judges read |
+| **B: Agents + LLM** | Roshan T · [@Git-Roshan09](https://github.com/Git-Roshan09) | `src/git0/llm/`, `agents/`, `mcp/` | A | Agents that only know what `checkout` tells them, plus a deterministic merge they can explain |
+| **C: Bench + concurrency** | Raghav N · [@Rag-795](https://github.com/Rag-795) | `bench/`, `scripts/`, README results | D | Measured proof: "LWW silently lost X%, Git0 lost 0" |
+| **D: UI + API + deploy** | Sai Nivedh · [@SaiNivedh26](https://github.com/SaiNivedh26) | `src/git0/api/`, `web/`, `Dockerfile`, `deploy/` | C | A judge who opens the link reaches the conflict card in 60 seconds |
 
 "winplan §N" in these docs = [`docs/plan/WINPLAN.md`](../plan/WINPLAN.md) (judge flow §8, video script §9, benchmark §7).
 
@@ -26,7 +26,7 @@ Natural swap pairs (overlapping context): **A↔B** (graph ↔ agents share `Mem
 ## Dependency graph between people
 ```
 A.models + repo (DONE in setup) ──► B.agents ──► D.chat UI
-A.plan_merge (P1-P2) ─────────────► B.arbiter, D.conflict card, C.membranch backend
+A.plan_merge (P1-P2) ─────────────► B.arbiter, D.conflict card, C.git0 backend
 B.llm cache (P1) ─────────────────► C.reproducible bench
 D.deploy (P0) ────────────────────► everyone's gate checks
 ```

@@ -5,7 +5,7 @@ import re
 from falkordb.asyncio import FalkorDB
 from falkordb.asyncio.graph import AsyncGraph
 
-from membranch.config import get_settings
+from git0.config import get_settings
 
 _TENANT_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 _db: FalkorDB | None = None

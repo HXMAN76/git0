@@ -1,4 +1,4 @@
-# FalkorDB research for Membranch (researched 2026-10-16)
+# FalkorDB research for Git0 (researched 2026-10-16)
 
 > **Correction (2026-10-16, verified on the running container):** `falkordb/falkordb:latest` is graph module **4.22.1** (same image ID as `v4.22.1`), not 6.0.x. We pin `v4.22.1`. Our measurements on that image are in `docs/ARCHITECTURE.md` §3.
 
@@ -27,7 +27,7 @@ FN = /cypher/functions, KL = /cypher/known-limitations, CC = /design/concurrency
    run per row. Use `FOREACH (f IN $facts | CREATE ...)` (does not change row count) and `CALL { WITH n UNWIND $removed AS rid MATCH ... CREATE ... }`
    (non-returning subquery keeps row count) [LIVE].
 5. **Variable-length paths enumerate PATHS, not nodes -> exponential on merge-diamonds** [LIVE]: a ladder of 22 diamonds
-   (67 distinct commits) = 16.7M paths, 2.4 s for `MATCH (h)-[:PARENT*0..200]->(c) RETURN count(c)`. Because Membranch has merge commits (2 parents),
+   (67 distinct commits) = 16.7M paths, 2.4 s for `MATCH (h)-[:PARENT*0..200]->(c) RETURN count(c)`. Because Git0 has merge commits (2 parents),
    do NOT use `[:PARENT*0..200]` for ancestor sets. Use `CALL algo.bfs(h, 100000, 'PARENT') YIELD nodes` (reachability, 0.4 ms on the same ladder)
    or `WITH DISTINCT c`, or a materialised `ancestors` list.
 6. **Materialised `commit.ancestors` list is O(N^2) memory** [LIVE]: 1000-commit linear history = 21 MB, 2000 = 82 MB, 4000 = 324 MB
@@ -225,7 +225,7 @@ Sources https://docs.falkordb.com/algorithms/index.md , /betweenness-centrality.
 - `CALL algo.bfs(startNode, maxDepth, 'REL_TYPE'|null) YIELD nodes, edges` : reachability, excludes the start node, order is NOT reliably BFS order [LIVE] - treat as a set. maxDepth required (use 100000).
   Also: WCC, CDLP, PageRank, Harmonic, MaxFlow, MSF, A*, k-shortest (4.22).
 
-## 9. Known limitations relevant to Membranch (consolidated)
+## 9. Known limitations relevant to Git0 (consolidated)
 
 - No `EXISTS {}`; use pattern predicates. Pattern comprehension bugs when nested (see table).
 - Var-length path enumeration is exponential on DAG diamonds; always `DISTINCT` or use `algo.bfs` for ancestor/reachability sets. A depth cap like `*0..200` bounds length, not path count.
@@ -255,7 +255,7 @@ Source https://docs.falkordb.com/operations/docker.md , https://docs.falkordb.co
 
 ---------------------------------------------------------------------------------------------------
 
-## RECOMMENDATIONS FOR MEMBRANCH (FalkorDB-valid Cypher)
+## RECOMMENDATIONS FOR GIT0 (FalkorDB-valid Cypher)
 
 Data model assumed: `(:Branch {name})-[:HEAD]->(:Commit {id, depth, msg, ts})`, `(:Commit)-[:PARENT {idx}]->(:Commit)`,
 `(:Fact {id, ...scalar props, payload_json})-[:ADDED_IN]->(:Commit)`, `(:Fact)-[:REMOVED_IN]->(:Commit)`, `(:Fact)-[:DERIVED_FROM]->(:Fact)`.

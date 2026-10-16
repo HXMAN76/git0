@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time GCP setup for Membranch (ADR 0005): Cloud Run API + private FalkorDB VM over Direct VPC egress.
+# One-time GCP setup for Git0 (ADR 0005): Cloud Run API + private FalkorDB VM over Direct VPC egress.
 #
 #   cp deploy/gcp/membranch.env.example deploy/gcp/membranch.env   # fill in
 #   deploy/gcp/setup.sh infra          # project, APIs, VPC, firewall, FalkorDB VM, registry, SAs, secrets, WIF

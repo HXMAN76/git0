@@ -13,7 +13,7 @@ Versions are what `uv sync` / `pnpm install` resolved today. Full research with 
 | Models | Pydantic v2 + pydantic-settings | 2.14 | Shared contracts. LLM output validation |
 | LLM primary | `groq` SDK, `openai/gpt-oss-20b` | 1.7 | Strict `json_schema` structured outputs (gpt-oss only). Fast |
 | LLM fallback | `google-genai`, Gemini Flash | 2.31 | Free tier, response schema. Check the model name in AI Studio |
-| MCP | `mcp` SDK | 2.3 | Should-have: Membranch as memory for Claude Code/Cursor |
+| MCP | `mcp` SDK | 2.3 | Should-have: Git0 as memory for Claude Code/Cursor |
 | Tests | pytest + pytest-asyncio | 9.1 / 1.4 | Run against a **real** FalkorDB, never mocks |
 | Lint | ruff | 0.17 | Lint + format in CI |
 
