@@ -3,8 +3,9 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +13,9 @@ from pydantic import BaseModel
 from redis.exceptions import ResponseError
 
 from git0 import __version__
+from git0.agents.arbiter import ConflictExplanation, RederiveResult, explain, rederive
+from git0.agents.base import LLMCall
+from git0.agents.handoff import HandoffResult, handoff
 from git0.config import get_settings
 from git0.core.db import close_db, ensure_schema, get_db, tenant_graph
 from git0.core.merge import apply_merge, plan_merge
@@ -26,8 +30,10 @@ from git0.core.models import (
     RevertResult,
     Scorecard,
 )
-from git0.core.repo import CommitConflictError, MemoryRepo
+from git0.core.repo import CommitConflictError, MemoryRepo, new_id
 from git0.core.revert import revert
+from git0.llm import client as llm_client
+from git0.llm.client import LLMError
 from git0.seed import seed
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
@@ -53,6 +59,12 @@ async def commit_conflict_handler(_: Request, exc: CommitConflictError) -> JSONR
     return JSONResponse({"detail": str(exc)}, status_code=409)
 
 
+@app.exception_handler(LLMError)
+async def llm_error_handler(_: Request, exc: LLMError) -> JSONResponse:
+    # Bad gateway: the model provider failed, not this API. The UI shows `detail` in a red banner (M12).
+    return JSONResponse({"detail": str(exc)}, status_code=502)
+
+
 @app.exception_handler(ResponseError)
 async def graph_error_handler(_: Request, exc: ResponseError) -> JSONResponse:
     # FalkorDB says this when a read hits a tenant graph that was never created (no init/seed yet).
@@ -60,6 +72,12 @@ async def graph_error_handler(_: Request, exc: ResponseError) -> JSONResponse:
         detail = "tenant not initialised: POST /api/{tenant}/init or /seed first"
         return JSONResponse({"detail": detail}, status_code=404)
     raise exc  # anything else is a real DB failure: fail loudly (500)
+
+
+def get_llm() -> LLMCall:
+    """The structured-output LLM call routes use. A FastAPI dependency so tests swap in a fake with
+    `app.dependency_overrides[get_llm]`. Looked up at call time so patching the client module also works."""
+    return llm_client.complete_json
 
 
 async def repo_for(tenant: str) -> MemoryRepo:
@@ -160,6 +178,12 @@ class ResolveRequest(MergeRequest):
     source_head: str | None = None
 
 
+class RederiveRequest(BaseModel):
+    target: str
+    fact_ids: list[str]  # MergeApplied.invalidated ids
+    session_id: str = "arbiter"
+
+
 class RevertRequest(BaseModel):
     branch: str
     commit_id: str
@@ -172,6 +196,30 @@ async def merge_preview(tenant: str, req: MergeRequest) -> MergeResult:
         return await plan_merge(await repo_for(tenant), req.source, req.target)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc
+
+
+@app.post("/api/{tenant}/merge/explain")
+async def merge_explain(
+    tenant: str, req: MergeRequest, llm: Annotated[LLMCall, Depends(get_llm)]
+) -> list[ConflictExplanation]:
+    try:
+        plan = await plan_merge(await repo_for(tenant), req.source, req.target)
+    except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
+        raise HTTPException(400, str(exc.args[0])) from exc
+    return await explain(plan, tenant=tenant, llm=llm)
+
+
+@app.post("/api/{tenant}/arbiter/rederive")
+async def arbiter_rederive(
+    tenant: str, req: RederiveRequest, llm: Annotated[LLMCall, Depends(get_llm)]
+) -> RederiveResult:
+    repo = await repo_for(tenant)
+    try:
+        await repo.head(req.target)  # unknown branch is a client error, not a silent new branch
+    except KeyError as exc:
+        raise HTTPException(400, str(exc.args[0])) from exc
+    facts = await repo.facts_by_ids(req.fact_ids)
+    return await rederive(repo, facts, target=req.target, tenant=tenant, session_id=req.session_id, llm=llm)
 
 
 @app.post("/api/{tenant}/merge/resolve")
@@ -194,6 +242,15 @@ async def revert_commit(tenant: str, req: RevertRequest) -> RevertResult:
         return await revert(await repo_for(tenant), req.branch, req.commit_id, req.agent_id)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc
+
+
+@app.post("/api/{tenant}/agents/{agent_id}/kill")
+async def kill_agent(tenant: str, agent_id: str) -> HandoffResult:
+    """Hand the agent's branch to its successor (agent-2, agent-3, ...). Unknown agent or branch is 404."""
+    try:
+        return await handoff(await repo_for(tenant), agent_id, session_id=new_id())
+    except KeyError as exc:
+        raise HTTPException(404, str(exc.args[0])) from exc
 
 
 @app.post("/api/{tenant}/commits")

@@ -104,6 +104,12 @@ class MemoryRepo:
         rows = _rows(await self.graph.ro_query(Q["checkout_commit"], {"commit": commit_id}))
         return [Fact(**r) for r in rows]
 
+    async def facts_by_ids(self, ids: list[str]) -> list[Fact]:
+        """Facts by id, visible or not (e.g. the dependents a merge just removed)."""
+        if not ids:
+            return []
+        return [Fact(**r) for r in _rows(await self.graph.ro_query(Q["facts_by_ids"], {"ids": ids}))]
+
     async def commit_changes(self, commit_id: str) -> tuple[list[Fact], list[Fact]]:
         """(added, removed) facts of one commit, not filtered by visibility."""
         rows = _rows(await self.graph.ro_query(Q["commit_changes"], {"commit": commit_id}))

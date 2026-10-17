@@ -122,9 +122,14 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 | `POST /api/{t}/merge/preview` | `{source, target}` → `MergeResult` | A `plan_merge` | done |
 | `POST /api/{t}/merge/resolve` | `{source, target, choices, agent_id?, target_head?, source_head?}` → `MergeApplied` (`invalidated` = facts for the Arbiter to re-derive). Send the previewed heads back: if either branch moved since, 409 "preview again" | A `apply_merge` | done |
 | `POST /api/{t}/revert` | `{branch, commit_id, agent_id?}` → `RevertResult` | A `revert` | done |
-| `POST /api/{t}/agents/{agent}/kill` | → `{successor, inherited}` (handoff) | B | P2 |
+| `GET /api/{t}/graph?branch=main&limit=200&episodes=true` | → `GraphView` (`branch`, `nodes: {id, label, kind, ...}[]`, `links: {source, target, type}[]`, `truncated`); 404 unknown branch | D (canvas) + A query | done |
+| `POST /api/{t}/merge/explain` | `{source, target}` → `ConflictExplanation[]` (`{key, text}`, one per conflict; one LLM call, cached) | B `arbiter.explain` | done |
+| `POST /api/{t}/arbiter/rederive` | `{target, fact_ids, session_id?}` → `RederiveResult` (`replies`, `tokens` spent, `owners`, `skipped`). Send `MergeApplied.invalidated[].id` as `fact_ids` | B `arbiter.rederive` | done |
+| `POST /api/{t}/agents/{agent}/kill` | → `HandoffResult` (`successor`, `branch`, `inherited: Fact[]`, `commits`, `commit_id`, `summary`). Unknown agent or branch is 404 | B `handoff` | done |
 | `POST /api/{t}/load-test` | `{writers}` → `{commits, lost, retries, p50_ms, p95_ms}` | C `run_load` | P2 |
 | `GET /api/{t}/scorecard` | → live Track 02 counts | A `scorecard.cypher` | done |
 | `POST /api/{t}/fork` | → `{graph, ms}` (GRAPH.COPY) | A | P3 |
+
+Any `LLMError` (provider failure, offline cache miss, tenant rate limit) comes back as **502 `{detail}`**, never 429 and never fabricated output (M12); the UI shows `detail` in a red banner. An SSE stream that has already started cannot use the 502: it sends an `error` event instead.
 
 Rule: a change to a contract file needs a PR that tags every consumer. Stubs raise `NotImplementedError` with a pointer to the owner's doc, so consumers code against the signature and swap in the real thing when it lands.
