@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from redis.exceptions import ResponseError
 
 from git0 import __version__
@@ -297,6 +297,26 @@ async def revert_commit(tenant: str, req: RevertRequest) -> RevertResult:
         raise HTTPException(400, str(exc.args[0])) from exc
     await repo.touch()
     return result
+
+
+class MessageRequest(BaseModel):
+    message: str = Field(min_length=1)
+    session_id: str = Field(default_factory=new_id)  # the UI keeps one per chat tab so turns group together
+
+
+@app.post("/api/{tenant}/agents/{agent_id}/messages")
+async def agent_message(
+    tenant: str, agent_id: str, req: MessageRequest, llm: Annotated[LLMCall, Depends(get_llm)]
+) -> AgentReply:
+    """One chat turn: the agent reads its branch, makes one LLM call and commits. Plain JSON for now;
+    SSE token streaming is issue #10. An LLM failure raises before any write and comes back as 502."""
+    agent = AGENTS.get(agent_id)
+    if agent is None:
+        raise HTTPException(404, f"unknown agent {agent_id!r}; one of {sorted(AGENTS)}")
+    repo = await repo_for(tenant)
+    reply = await step(agent, repo, req.message, req.session_id, tenant=tenant, llm=llm)
+    await repo.touch()  # chatting without a page reload still counts as activity for the room sweep
+    return reply
 
 
 @app.post("/api/{tenant}/agents/{agent_id}/kill")

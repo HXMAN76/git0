@@ -3,14 +3,10 @@
 // cited fact IDs up to App so WhyPath and MemoryCanvas can highlight them.
 
 import { useRef, useState } from 'react'
+import type { ChatPrompt } from './DemoGuide'
+import { AGENT_BRANCHES } from '../lib/branches'
 
-const AGENTS = [
-  { id: 'planner', label: 'Planner', color: '#a78bfa' },
-  { id: 'scheduler', label: 'Scheduler', color: '#60a5fa' },
-  { id: 'notes', label: 'Notes', color: '#34d399' },
-] as const
-
-type AgentId = (typeof AGENTS)[number]['id']
+type AgentId = (typeof AGENT_BRANCHES)[number]['id']
 
 interface Message {
   role: 'user' | 'agent'
@@ -22,6 +18,8 @@ interface Message {
 
 interface Props {
   tenant: string
+  /** A message to put in the box (the demo guide's step 1); a new object each click. The visitor still sends it. */
+  prompt?: ChatPrompt | null
   onFactClick?: (factId: string) => void
   onAgentChange?: (agentId: string) => void
 }
@@ -30,24 +28,18 @@ function useAgentChat(tenant: string, agentId: AgentId) {
   const [messages, setMessages] = useState<Message[]>([])
   const [busy, setBusy] = useState(false)
   const sessionId = useRef(crypto.randomUUID())
-  const stopRef = useRef<(() => void) | null>(null)
 
   function send(text: string) {
     if (busy || !text.trim()) return
     setBusy(true)
-
     setMessages((prev) => [...prev, { role: 'user', text }])
-    // placeholder streaming message
     setMessages((prev) => [...prev, { role: 'agent', text: '', streaming: true }])
 
     const url = `/api/${tenant}/agents/${agentId}/messages`
-    // SSE via POST: EventSource only supports GET, so we open the connection via fetch + ReadableStream.
+    // SSE via POST: EventSource only supports GET, so we use fetch + ReadableStream.
     let cancelled = false
     let agentText = ''
-    let citedIds: string[] = []
-
     const ctrl = new AbortController()
-    stopRef.current = () => { cancelled = true; ctrl.abort() }
 
     fetch(url, {
       method: 'POST',
@@ -65,8 +57,6 @@ function useAgentChat(tenant: string, agentId: AgentId) {
           const { done, value } = await reader.read()
           if (done || cancelled) break
           buf += dec.decode(value, { stream: true })
-
-          // Parse SSE lines from buffer
           const parts = buf.split('\n\n')
           buf = parts.pop() ?? ''
 
@@ -88,26 +78,16 @@ function useAgentChat(tenant: string, agentId: AgentId) {
                   return next
                 })
               } else if (eventName === 'commit') {
-                citedIds = payload.cited_fact_ids ?? []
+                const citedIds: string[] = payload.cited_fact_ids ?? []
                 setMessages((prev) => {
                   const next = [...prev]
-                  next[next.length - 1] = {
-                    role: 'agent',
-                    text: agentText,
-                    cited_fact_ids: citedIds,
-                    streaming: false,
-                  }
+                  next[next.length - 1] = { role: 'agent', text: agentText, cited_fact_ids: citedIds, streaming: false }
                   return next
                 })
               } else if (eventName === 'error') {
                 setMessages((prev) => {
                   const next = [...prev]
-                  next[next.length - 1] = {
-                    role: 'agent',
-                    text: payload.message ?? 'Unknown error',
-                    error: true,
-                    streaming: false,
-                  }
+                  next[next.length - 1] = { role: 'agent', text: payload.message ?? 'Unknown error', error: true, streaming: false }
                   return next
                 })
               }
@@ -125,10 +105,7 @@ function useAgentChat(tenant: string, agentId: AgentId) {
           return next
         })
       })
-      .finally(() => {
-        if (!cancelled) setBusy(false)
-        stopRef.current = null
-      })
+      .finally(() => { if (!cancelled) setBusy(false) })
   }
 
   return { messages, busy, send }
@@ -139,15 +116,29 @@ function AgentChat({
   agentId,
   color,
   onFactClick,
+  externalDraft,
+  onDraftConsumed,
 }: {
   tenant: string
   agentId: AgentId
   color: string
   onFactClick?: (id: string) => void
+  externalDraft?: string
+  onDraftConsumed?: () => void
 }) {
   const { messages, busy, send } = useAgentChat(tenant, agentId)
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // State-during-render: sync external draft into the text box.
+  const [seenDraft, setSeenDraft] = useState<string | undefined>(undefined)
+  if (externalDraft !== seenDraft) {
+    setSeenDraft(externalDraft)
+    if (externalDraft) {
+      setInput(externalDraft)
+      onDraftConsumed?.()
+    }
+  }
 
   function submit() {
     const t = input.trim()
@@ -159,27 +150,21 @@ function AgentChat({
 
   return (
     <div className="flex h-full flex-col">
-      {/* message list */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
         {messages.length === 0 && (
-          <p className="text-xs text-neutral-500 text-center mt-8">
-            Send a message to start.
-          </p>
+          <p className="text-xs text-neutral-500 text-center mt-8">Send a message to start.</p>
         )}
         {messages.map((m, i) => (
           <div key={i} className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-            <div
-              className={`max-w-[85%] rounded px-3 py-2 text-sm whitespace-pre-wrap break-words ${
-                m.role === 'user'
-                  ? 'bg-neutral-700 text-neutral-100'
-                  : m.error
-                  ? 'bg-red-950 border border-red-700 text-red-200'
-                  : 'bg-neutral-800 text-neutral-100'
-              }`}
-            >
+            <div className={`max-w-[85%] rounded px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+              m.role === 'user'
+                ? 'bg-neutral-700 text-neutral-100'
+                : m.error
+                ? 'bg-red-950 border border-red-700 text-red-200'
+                : 'bg-neutral-800 text-neutral-100'
+            }`}>
               {m.text || (m.streaming ? <span className="animate-pulse text-neutral-400">…</span> : '')}
             </div>
-            {/* cited fact links */}
             {m.cited_fact_ids && m.cited_fact_ids.length > 0 && (
               <div className="flex flex-wrap gap-1 px-1">
                 {m.cited_fact_ids.map((id) => (
@@ -201,7 +186,6 @@ function AgentChat({
         <div ref={bottomRef} />
       </div>
 
-      {/* input */}
       <div className="border-t border-neutral-800 p-2 flex gap-2">
         <input
           className="flex-1 rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 outline-none focus:ring-1 focus:ring-neutral-600"
@@ -224,21 +208,35 @@ function AgentChat({
   )
 }
 
-export function ChatPanel({ tenant, onFactClick, onAgentChange }: Props) {
-  const [activeAgent, setActiveAgent] = useState<AgentId>('planner')
+export function ChatPanel({ tenant, prompt = null, onFactClick, onAgentChange }: Props) {
+  const [activeAgent, setActiveAgent] = useState<AgentId>(AGENT_BRANCHES[0].id)
+  const [pendingDraft, setPendingDraft] = useState<{ agent: AgentId; text: string } | null>(null)
+
+  // State-during-render: pipe DemoGuide prompt into the active agent's text box.
+  const [seenPrompt, setSeenPrompt] = useState<ChatPrompt | null>(null)
+  if (prompt !== seenPrompt) {
+    setSeenPrompt(prompt)
+    if (prompt) {
+      setActiveAgent(prompt.agent as AgentId)
+      setPendingDraft({ agent: prompt.agent as AgentId, text: prompt.text })
+    }
+  }
+
+  function switchAgent(id: AgentId) {
+    setActiveAgent(id)
+    onAgentChange?.(id)
+  }
+
   return (
     <div className="flex h-full flex-col">
-      {/* agent tabs */}
       <div className="flex border-b border-neutral-800">
-        {AGENTS.map((a) => (
+        {AGENT_BRANCHES.map((a) => (
           <button
             key={a.id}
             type="button"
-            onClick={() => { setActiveAgent(a.id); onAgentChange?.(a.id) }}
+            onClick={() => switchAgent(a.id)}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
-              activeAgent === a.id
-                ? 'border-b-2 text-white'
-                : 'text-neutral-400 hover:text-neutral-200'
+              activeAgent === a.id ? 'border-b-2 text-white' : 'text-neutral-400 hover:text-neutral-200'
             }`}
             style={activeAgent === a.id ? { borderColor: a.color } : {}}
           >
@@ -247,10 +245,17 @@ export function ChatPanel({ tenant, onFactClick, onAgentChange }: Props) {
         ))}
       </div>
 
-      {/* keep all agents mounted so history is preserved when switching tabs */}
-      {AGENTS.map((a) => (
+      {/* Keep all agents mounted so history is preserved when switching tabs. */}
+      {AGENT_BRANCHES.map((a) => (
         <div key={a.id} className={`min-h-0 flex-1 ${a.id === activeAgent ? 'flex flex-col' : 'hidden'}`}>
-          <AgentChat tenant={tenant} agentId={a.id} color={a.color} onFactClick={onFactClick} />
+          <AgentChat
+            tenant={tenant}
+            agentId={a.id}
+            color={a.color}
+            onFactClick={onFactClick}
+            externalDraft={pendingDraft?.agent === a.id ? pendingDraft.text : undefined}
+            onDraftConsumed={() => setPendingDraft(null)}
+          />
         </div>
       ))}
     </div>
