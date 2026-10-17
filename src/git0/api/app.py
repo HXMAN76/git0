@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from redis.exceptions import ResponseError
 
 from git0 import __version__
@@ -325,7 +325,7 @@ async def why(tenant: str, fact_id: str) -> list[dict]:
 
 
 class MessageRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1)
     session_id: str | None = None
 
 
@@ -356,6 +356,7 @@ async def agent_message(
                     "cited_fact_ids": reply.cited_fact_ids,
                     "branch": reply.branch,
                     "agent_id": reply.agent_id,
+                    "usage": reply.usage.model_dump() if reply.usage else None,
                 },
             )
         except LLMError as exc:
