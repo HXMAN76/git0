@@ -111,6 +111,7 @@ def to_commit_request(
     removed = [visible[k].id for k in removed_keys if k not in new_ids and k in visible]
 
     derived: list[Derivation] = []
+    seen: set[tuple[str, str]] = set()
     for link in extraction.derived:
         child, parent = _key(link.child_key), _key(link.parent_key)
         if child not in new_ids or parent is None:
@@ -118,7 +119,12 @@ def to_commit_request(
         parent_id = new_ids.get(parent) or (visible[parent].id if parent in visible else None)
         if parent_id is None or parent_id == new_ids[child]:  # unknown parent, or a fact derived from itself
             continue
-        derived.append(Derivation(child=new_ids[child], parent=parent_id))
+        # commit_cas CREATEs one DERIVED_FROM edge per pair, so a repeated link must not be sent twice.
+        pair = (new_ids[child], parent_id)
+        if pair in seen:
+            continue
+        seen.add(pair)
+        derived.append(Derivation(child=pair[0], parent=pair[1]))
 
     procedures = [
         NewProcedure(id=new_id(), trigger=p.trigger, steps=json.dumps(p.steps)) for p in extraction.procedures

@@ -216,6 +216,17 @@ RETURN DISTINCT d.id AS id, d.s AS s, d.p AS p, d.o AS o, d.key AS key,
 ORDER BY key
 ```
 
+## `derived_edge_count`
+
+Number of DERIVED_FROM edges from fact $child to fact $parent. Deliberately NOT DISTINCT: duplicate edges
+must show up as n > 1. Tests use it to prove one commit writes one edge per (child, parent) pair.
+Read-only. count() over no matches returns a single 0 row.
+
+```cypher
+MATCH (:Fact {id: $child})-[r:DERIVED_FROM]->(:Fact {id: $parent})
+RETURN count(r) AS n
+```
+
 ## `fact_links`
 
 Direct DERIVED_FROM neighbours of fact $fid: `children` derive from it, `parents` it derives from.

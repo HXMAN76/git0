@@ -12,6 +12,7 @@ from git0.agents.extract import (
     to_commit_request,
 )
 from git0.core.models import CommitRequest, Episode, Fact, NewFact, Procedure
+from git0.core.queries import Q
 from git0.core.repo import new_id
 from git0.llm.client import strict_schema
 
@@ -130,6 +131,17 @@ def test_derived_parent_falls_back_to_visible_fact():
     assert [d.parent for d in req.derived] == ["old-dl"]
 
 
+def test_repeated_derived_link_gives_one_derivation():
+    view = [visible("launch", "deadline", "fri", "old-dl")]
+    link = ExtractedLink(child_key="launch|budget", parent_key="launch|deadline")
+    req, _ = to_req(
+        ext(facts=[ExtractedFact(s="launch", p="budget", o="10k")], derived=[link, link]),
+        view,
+    )
+    assert len(req.derived) == 1
+    assert req.derived[0].parent == "old-dl"
+
+
 def test_derived_links_with_unknown_parent_or_non_new_child_are_dropped():
     view = [visible("launch", "deadline", "fri", "old-dl")]
     req, _ = to_req(
@@ -202,7 +214,11 @@ async def test_commit_round_trip_on_graph_writes_derivation(repo):
     req, cited = to_commit_request(
         ext(
             facts=[ExtractedFact(s="Launch", p="budget", o="10k")],
-            derived=[ExtractedLink(child_key="launch|budget", parent_key="launch|deadline")],
+            # The same link twice must still land as exactly one DERIVED_FROM edge.
+            derived=[
+                ExtractedLink(child_key="launch|budget", parent_key="launch|deadline"),
+                ExtractedLink(child_key="launch|budget", parent_key="launch|deadline"),
+            ],
             cited_keys=["launch|deadline"],
         ),
         view,
@@ -212,6 +228,9 @@ async def test_commit_round_trip_on_graph_writes_derivation(repo):
         episode=episode(),
     )
     await repo.commit(req)
+    child_id = next(f.id for f in req.facts if f.p == "budget")
+    edges = await repo.graph.ro_query(Q["derived_edge_count"], {"child": child_id, "parent": parent.id})
+    assert edges.result_set[0][0] == 1
     facts = {f.key: f for f in await repo.checkout("main")}
     assert facts["launch|budget"].o == "10k"
     assert cited == {"launch|deadline": parent.id}
