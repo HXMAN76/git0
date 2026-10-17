@@ -234,6 +234,14 @@ class MemoryRepo:
         links = [GraphLink(source=s, target=t, type=k) for s, t, k in edges if s in nodes and t in nodes]
         return GraphView(branch=branch, nodes=list(nodes.values()), links=links, truncated=truncated)
 
+    async def touch(self) -> int:
+        """Mark the room as used now (Room.last_seen) so the sweep keeps it. Returns last_seen in ms."""
+        return _rows(await self.graph.query(Q["touch_room"]))[0]["last_seen"]
+
+    async def last_seen(self) -> int | None:
+        """Room.last_seen in ms; the root commit ts for rooms without a Room node; None for an empty graph."""
+        return _rows(await self.graph.ro_query(Q["room_last_seen"]))[0]["last_seen"]
+
     async def scorecard(self) -> Scorecard:
         """Live counters in one read query. `tenants` stays 0 here: only the API knows the other graphs."""
         res = await self.graph.ro_query(Q["scorecard"])
