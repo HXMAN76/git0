@@ -26,6 +26,7 @@ def parse_sse(text: str) -> dict:
         events[name] = data
     return events
 
+
 GRAPH = "team_ci_agents"
 
 
