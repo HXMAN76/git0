@@ -66,10 +66,11 @@ async def llm_error_handler(_: Request, exc: LLMError) -> JSONResponse:
 
 
 @app.exception_handler(ResponseError)
-async def graph_error_handler(_: Request, exc: ResponseError) -> JSONResponse:
+async def graph_error_handler(request: Request, exc: ResponseError) -> JSONResponse:
     # FalkorDB says this when a read hits a tenant graph that was never created (no init/seed yet).
     if "Invalid graph operation on empty key" in str(exc):
-        detail = "tenant not initialised: POST /api/{tenant}/init or /seed first"
+        tenant = request.path_params.get("tenant", "<tenant>")
+        detail = f"tenant not initialised: POST /api/{tenant}/init or /api/{tenant}/seed first"
         return JSONResponse({"detail": detail}, status_code=404)
     raise exc  # anything else is a real DB failure: fail loudly (500)
 

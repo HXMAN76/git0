@@ -3,9 +3,8 @@ import { ChatPanel } from './components/ChatPanel'
 import { CommitDag } from './components/CommitDag'
 import { MemoryCanvas } from './components/MemoryCanvas'
 import { Scorecard } from './components/Scorecard'
-
-// Until the per-visitor tenant lands (person-d-ui-deploy.md), every view reads the seeded demo room.
-const TENANT = 'demo'
+import { TenantGate } from './components/TenantGate'
+import { resolveTenant } from './lib/tenant'
 
 type CenterTab = 'commits' | 'memory'
 
@@ -17,6 +16,8 @@ const CENTER_TABS: { id: CenterTab; label: string }[] = [
 // 3-column shell: chat | (commit DAG + memory graph tabs) | scorecard.
 export default function App() {
   const [tab, setTab] = useState<CenterTab>('commits')
+  // One room per visitor (or ?team=<id> for a shared link), resolved once per page load.
+  const [tenant] = useState(() => resolveTenant(window.location.search, window.localStorage))
 
   return (
     <div className="grid h-dvh grid-cols-[320px_1fr_300px] bg-neutral-950 text-neutral-100">
@@ -25,7 +26,7 @@ export default function App() {
       </aside>
 
       <main className="flex min-h-0 flex-col">
-        <div role="tablist" className="flex gap-1 border-b border-neutral-800 p-2">
+        <div role="tablist" className="flex items-center gap-1 border-b border-neutral-800 p-2">
           {CENTER_TABS.map((t) => (
             <button
               key={t.id}
@@ -40,9 +41,14 @@ export default function App() {
               {t.label}
             </button>
           ))}
+          <span className="ml-auto text-xs text-neutral-500" title="Share this room: add ?team=<id> to the link">
+            room: {tenant}
+          </span>
         </div>
         <div role="tabpanel" className="min-h-0 flex-1">
-          {tab === 'commits' ? <CommitDag /> : <MemoryCanvas tenant={TENANT} />}
+          <TenantGate tenant={tenant}>
+            {(t) => (tab === 'commits' ? <CommitDag /> : <MemoryCanvas tenant={t} />)}
+          </TenantGate>
         </div>
       </main>
 
