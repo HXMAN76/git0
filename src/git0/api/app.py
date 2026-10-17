@@ -1,6 +1,7 @@
 """FastAPI app (Person D owns routes/UI wiring; Person A owns the repo calls behind them)."""
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
@@ -9,15 +10,16 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from redis.exceptions import ResponseError
 
 from git0 import __version__
 from git0.agents.arbiter import ConflictExplanation, RederiveResult, explain, rederive
-from git0.agents.base import LLMCall
+from git0.agents.base import AgentReply, LLMCall, step
 from git0.agents.handoff import HandoffResult, handoff
+from git0.agents.specs import AGENTS
 from git0.config import get_settings
 from git0.core.db import close_db, ensure_schema, get_db, tenant_graph
 from git0.core.merge import apply_merge, plan_merge
@@ -320,6 +322,47 @@ async def commit(tenant: str, req: CommitRequest) -> dict:
 @app.get("/api/{tenant}/facts/{fact_id}/why")
 async def why(tenant: str, fact_id: str) -> list[dict]:
     return await (await repo_for(tenant)).why(fact_id)
+
+
+class MessageRequest(BaseModel):
+    text: str
+    session_id: str | None = None
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.post("/api/{tenant}/agents/{agent_id}/messages")
+async def agent_message(tenant: str, agent_id: str, req: MessageRequest) -> StreamingResponse:
+    """Run one agent turn and stream SSE events: token (reply text), commit (ids), error."""
+    spec = AGENTS.get(agent_id)
+    if spec is None:
+        raise HTTPException(404, f"unknown agent: {agent_id!r}")
+    repo = await repo_for(tenant)
+    session_id = req.session_id or new_id()
+
+    async def generate():
+        try:
+            reply: AgentReply = await step(spec, repo, req.text, session_id, tenant=tenant)
+            await repo.touch()
+            yield _sse("token", {"text": reply.text, "agent_id": reply.agent_id})
+            yield _sse("commit", {
+                "commit_id": reply.commit_id,
+                "cited_fact_ids": reply.cited_fact_ids,
+                "branch": reply.branch,
+                "agent_id": reply.agent_id,
+            })
+        except LLMError as exc:
+            yield _sse("error", {"message": str(exc)})
+        except Exception as exc:
+            logger.exception("agent step failed: tenant=%s agent=%s", tenant, agent_id)
+            yield _sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # tells Caddy/nginx not to buffer SSE
+    })
 
 
 if WEB_DIST.is_dir():  # single deploy: FastAPI serves the built React app (mounted last)

@@ -7,7 +7,9 @@ _RULES = (
     "Use only facts listed in the context; never invent facts. "
     "Put the key 'subject|predicate' of every fact your reply relies on in `cited_keys`. "
     "If the user asks about something the context lacks, do not guess: still put the key you looked for "
-    "(e.g. 'caterer|contact') in `cited_keys`, and the system will report it as not in team memory."
+    "(e.g. 'caterer|contact') in `cited_keys`, and the system will report it as not in team memory. "
+    "When the user asks to UPDATE or CHANGE an existing fact: add the new value to `facts` AND put "
+    "the old key (e.g. 'launch|deadline') in `removed_keys` so the old value is retracted."
 )
 
 PLANNER = AgentSpec(
