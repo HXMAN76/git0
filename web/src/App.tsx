@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { BranchPicker } from './components/BranchPicker'
 import { ChatPanel } from './components/ChatPanel'
 import { CommitDag } from './components/CommitDag'
 import { DemoGuide, type ChatPrompt } from './components/DemoGuide'
@@ -6,7 +7,6 @@ import { MemoryCanvas } from './components/MemoryCanvas'
 import { MergeBar } from './components/MergeBar'
 import { Scorecard } from './components/Scorecard'
 import { TenantGate } from './components/TenantGate'
-import { BRANCHES } from './lib/branches'
 import { resolveTenant } from './lib/tenant'
 
 type CenterTab = 'memory' | 'history'
@@ -60,22 +60,7 @@ export default function App() {
                       {c.label}
                     </button>
                   ))}
-                  {tab === 'memory' && (
-                    <label className="ml-auto flex items-center gap-2 text-xs text-neutral-400">
-                      Showing
-                      <select
-                        value={branch}
-                        onChange={(e) => setBranch(e.target.value)}
-                        className="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-neutral-100"
-                      >
-                        {BRANCHES.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.id === 'main' ? b.label : `${b.label}${b.label.endsWith('s') ? "'" : "'s"} own memory`}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
+                  {tab === 'memory' && <BranchPicker tenant={t} value={branch} onChange={setBranch} />}
                 </div>
                 <div role="tabpanel" className="min-h-0 flex-1">
                   {tab === 'memory' ? <MemoryCanvas tenant={t} branch={branch} /> : <CommitDag tenant={t} />}

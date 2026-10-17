@@ -4,7 +4,7 @@
 // makes one LLM call and commits what it learned. Plain JSON for now; token streaming is issue #10.
 // The thread lives in this component only: memory is what the agent committed, not this list.
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { components } from '../api/schema'
@@ -55,6 +55,11 @@ export function ChatPanel({ tenant, prompt = null }: Props) {
       setDraft(prompt.text)
     }
   }
+  // After the guide fills the box, Enter should send it, not re-press the guide button.
+  const input = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (prompt) input.current?.focus()
+  }, [prompt])
   const memoryChanged = useMemoryChanged(tenant)
   const append = (a: AgentId, t: Turn) => setThreads((all) => ({ ...all, [a]: [...all[a], t] }))
 
@@ -127,6 +132,7 @@ export function ChatPanel({ tenant, prompt = null }: Props) {
         </label>
         <input
           id="chat-input"
+          ref={input}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder={`Message ${AGENT_BRANCHES.find((b) => b.id === agent)!.label}…`}
