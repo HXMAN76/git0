@@ -13,18 +13,18 @@
 - [ ] Confirm the current Gemini Flash model id in AI Studio and update `.env.example`
 
 ## Phase 1 (→ Oct 17 10:00)
-- [ ] `llm/client.py complete_json()`: Groq `response_format={"type":"json_schema","json_schema":{"name":..,"schema":Model.model_json_schema(),"strict":True}}` → Pydantic `model_validate_json` → on API error/timeout fall back to Gemini → on total failure raise `LLMError`. **Never** return a made-up default (M12)
-- [ ] Disk cache: key `sha256(model|system|prompt|schema_json)`, file `LLM_CACHE_DIR/<key>.json` storing output + usage. `GIT0_LLM_OFFLINE=1` → cache only (bench + CI)
-- [ ] `Extraction` schema: `facts: list[NewFact]`, `procedures: list[NewProcedure]` (learned workflows, steps JSON-encoded), `removed_keys: list[str]`, `derived: list[{child_key, parent_key}]`, `reply: str`. Prompt injects the current entity list from checkout ("reuse an id from this list") (M16)
-- [ ] `agents/base.step()` for Planner end to end: checkout → extract → commit (with Episode) → reply with cited fact ids
+- [x] `llm/client.py complete_json()`: Groq `response_format={"type":"json_schema","json_schema":{"name":..,"schema":Model.model_json_schema(),"strict":True}}` → Pydantic `model_validate_json` → on API error/timeout fall back to Gemini → on total failure raise `LLMError`. **Never** return a made-up default (M12)
+- [x] Disk cache: key `sha256(model|system|prompt|schema_json)`, file `LLM_CACHE_DIR/<key>.json` storing output + usage. `LLM_OFFLINE=1` → cache only (bench + CI)
+- [x] `Extraction` schema: `facts: list[NewFact]`, `procedures: list[NewProcedure]` (learned workflows, steps JSON-encoded), `removed_keys: list[str]`, `derived: list[{child_key, parent_key}]`, `reply: str`. Prompt injects the current entity list from checkout ("reuse an id from this list") (M16)
+- [x] `agents/base.step()` for Planner end to end: checkout → extract → commit (with Episode) → reply with cited fact ids
 - [ ] Tests: cached fixtures in `tests/llm/fixtures/`. One live test marked `@pytest.mark.llm`, skipped without `GROQ_API_KEY`
 
 ## Phase 2 (→ Oct 17 22:00)
 - [ ] Agent replies stream over SSE. Emit a `: ping` heartbeat every 15 s while the LLM is thinking (CloudFront limit, ADR 0006)
-- [ ] Scheduler + Notes agents on their own branches. Scheduler derives tasks from facts ("book venue Fri" `DERIVED_FROM` "launch=Fri")
-- [ ] Arbiter: takes A's `MergeResult`, writes a plain-language explanation per conflict ("Planner and Scheduler disagree…"). Once the human picks, it re-invokes **only** the owners of invalidated derived facts. Count the tokens saved vs re-planning everything (for C)
-- [ ] Handoff: `kill(agent)` → new agent instance checks out the same branch, reads `log`, says what it inherited
-- [ ] "Not in memory": if `repo.lookup()` is empty, the agent answers exactly "not in team memory (no path from main HEAD)"
+- [x] Scheduler + Notes agents on their own branches. Scheduler derives tasks from facts ("book venue Fri" `DERIVED_FROM` "launch=Fri")
+- [x] Arbiter: takes A's `MergeResult`, writes a plain-language explanation per conflict ("Planner and Scheduler disagree…"). Once the human picks, it re-invokes **only** the owners of invalidated derived facts. Count the tokens saved vs re-planning everything (for C)
+- [x] Handoff: `kill(agent)` → new agent instance checks out the same branch, reads `log`, says what it inherited
+- [x] "Not in memory": if `repo.lookup()` is empty, the agent answers exactly "not in team memory (no path from main HEAD)"
 
 ## Phase 3 (→ Oct 18 12:00)
 - [ ] Per-tenant token bucket (protect the Groq quota during judging). A rate-limit error goes to the UI as a red banner
