@@ -151,3 +151,21 @@ def test_agent_message_commits_one_turn_on_the_agents_branch_and_llm_error_is_50
     finally:
         app.dependency_overrides.pop(get_llm, None)
         FalkorDB.from_url(get_settings().falkordb_url).select_graph("team_ci_chat").delete()
+
+
+def test_agent_message_keeps_the_room_alive():
+    """A visitor who only chats (no page reload) must not have their room swept as idle."""
+    graph = FalkorDB.from_url(get_settings().falkordb_url).select_graph("team_ci_chat_touch")
+    stamp = "MATCH (r:Room) RETURN r.last_seen"
+    calls: list = []
+    try:
+        with TestClient(app) as client:
+            app.dependency_overrides[get_llm] = lambda: fake_llm(calls)
+            assert client.post("/api/ci_chat_touch/seed").status_code == 200
+            graph.query("MATCH (r:Room) SET r.last_seen = 0")  # pretend the room went quiet long ago
+            r = client.post("/api/ci_chat_touch/agents/planner/messages", json={"message": "hello"})
+            assert r.status_code == 200
+            assert graph.ro_query(stamp).result_set[0][0] > 0
+    finally:
+        app.dependency_overrides.pop(get_llm, None)
+        graph.delete()

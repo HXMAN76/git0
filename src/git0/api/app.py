@@ -313,7 +313,9 @@ async def agent_message(
     if agent is None:
         raise HTTPException(404, f"unknown agent {agent_id!r}; one of {sorted(AGENTS)}")
     repo = await repo_for(tenant)
-    return await step(agent, repo, req.message, req.session_id, tenant=tenant, llm=llm)
+    reply = await step(agent, repo, req.message, req.session_id, tenant=tenant, llm=llm)
+    await repo.touch()  # chatting without a page reload still counts as activity for the room sweep
+    return reply
 
 
 @app.post("/api/{tenant}/agents/{agent_id}/kill")
