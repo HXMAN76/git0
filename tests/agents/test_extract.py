@@ -12,7 +12,6 @@ from git0.agents.extract import (
     to_commit_request,
 )
 from git0.core.models import CommitRequest, Episode, Fact, NewFact, Procedure
-from git0.core.queries import Q
 from git0.core.repo import new_id
 from git0.llm.client import strict_schema
 
@@ -229,7 +228,11 @@ async def test_commit_round_trip_on_graph_writes_derivation(repo):
     )
     await repo.commit(req)
     child_id = next(f.id for f in req.facts if f.p == "budget")
-    edges = await repo.graph.ro_query(Q["derived_edge_count"], {"child": child_id, "parent": parent.id})
+    # Deliberately not DISTINCT: a duplicate edge would show up as a count above 1.
+    edges = await repo.graph.ro_query(
+        "MATCH (:Fact {id: $child})-[r:DERIVED_FROM]->(:Fact {id: $parent}) RETURN count(r)",
+        {"child": child_id, "parent": parent.id},
+    )
     assert edges.result_set[0][0] == 1
     facts = {f.key: f for f in await repo.checkout("main")}
     assert facts["launch|budget"].o == "10k"
