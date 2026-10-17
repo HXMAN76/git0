@@ -79,5 +79,6 @@ describe('ChatPanel prompt', () => {
     expect((screen.getByLabelText(/Message/) as HTMLInputElement).value).toBe('The launch moved to Monday.')
     expect(screen.getByRole('tab', { name: 'Planner' }).getAttribute('aria-selected')).toBe('true')
     expect(fetch).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(screen.getByLabelText(/Message/)) // Enter now sends it
   })
 })
