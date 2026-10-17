@@ -100,6 +100,7 @@ class Commit(BaseModel):
     kind: str | None = None
     added: int = 0
     removed: int = 0
+    parents: list[str] = []  # PARENT edge targets: 2 for a merge, 0 for the root; only `log` fills it
 
 
 class Scorecard(BaseModel):

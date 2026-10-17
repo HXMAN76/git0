@@ -1,7 +1,7 @@
 // Owner: Person D — see docs/team/person-d-ui-deploy.md
 // Team history: every memory update on team memory, Planner, Scheduler and Notes, from each branch's
-// GET /log, laid out left-to-right with dagre and drawn with React Flow. See lib/commitDag.ts for why
-// edges are linear per branch.
+// GET /log, laid out left-to-right with dagre and drawn with React Flow. Merges join both parents; see
+// lib/commitDag.ts.
 
 import { useMemo } from 'react'
 import * as dagre from '@dagrejs/dagre'
