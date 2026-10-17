@@ -112,3 +112,60 @@ def test_explain_and_rederive_routes_with_fake_llm_and_llm_error_is_502():
     finally:
         app.dependency_overrides.pop(get_llm, None)
         FalkorDB.from_url(get_settings().falkordb_url).select_graph("team_ci_arbiter").delete()
+
+
+def test_agent_message_commits_one_turn_on_the_agents_branch_and_llm_error_is_502():
+    t = "/api/ci_chat"
+    calls: list = []
+    try:
+        with TestClient(app) as client:
+            app.dependency_overrides[get_llm] = lambda: fake_llm(calls)
+            assert client.post(f"{t}/seed").status_code == 200
+            before = len(client.get(f"{t}/branches/scheduler/log").json())
+
+            r = client.post(
+                f"{t}/agents/scheduler/messages", json={"message": "book the venue", "session_id": "s1"}
+            )
+            assert r.status_code == 200
+            reply = r.json()
+            assert reply["agent_id"] == "scheduler" and reply["branch"] == "scheduler"
+            assert reply["text"] == "Re-planned." and reply["usage"]["prompt_tokens"] == 5
+            assert calls == [Extraction]
+
+            log = client.get(f"{t}/branches/scheduler/log").json()
+            assert len(log) == before + 1 and log[0]["id"] == reply["commit_id"]
+            facts = {f["key"]: f["o"] for f in client.get(f"{t}/branches/scheduler/checkout").json()}
+            assert facts["venue|status"] == "booked monday"
+
+            assert client.post(f"{t}/agents/ghost/messages", json={"message": "hi"}).status_code == 404
+            assert client.post(f"{t}/agents/planner/messages", json={"message": ""}).status_code == 422
+
+            async def failing(prompt, schema, *, system, tenant):
+                raise LLMError("all LLM providers failed: boom")
+
+            app.dependency_overrides[get_llm] = lambda: failing
+            down = client.post(f"{t}/agents/planner/messages", json={"message": "move launch to monday"})
+            assert down.status_code == 502 and down.json() == {"detail": "all LLM providers failed: boom"}
+            # A failed turn writes nothing.
+            assert client.get(f"{t}/branches/planner/log").json()[0]["kind"] == "seed"
+    finally:
+        app.dependency_overrides.pop(get_llm, None)
+        FalkorDB.from_url(get_settings().falkordb_url).select_graph("team_ci_chat").delete()
+
+
+def test_agent_message_keeps_the_room_alive():
+    """A visitor who only chats (no page reload) must not have their room swept as idle."""
+    graph = FalkorDB.from_url(get_settings().falkordb_url).select_graph("team_ci_chat_touch")
+    stamp = "MATCH (r:Room) RETURN r.last_seen"
+    calls: list = []
+    try:
+        with TestClient(app) as client:
+            app.dependency_overrides[get_llm] = lambda: fake_llm(calls)
+            assert client.post("/api/ci_chat_touch/seed").status_code == 200
+            graph.query("MATCH (r:Room) SET r.last_seen = 0")  # pretend the room went quiet long ago
+            r = client.post("/api/ci_chat_touch/agents/planner/messages", json={"message": "hello"})
+            assert r.status_code == 200
+            assert graph.ro_query(stamp).result_set[0][0] > 0
+    finally:
+        app.dependency_overrides.pop(get_llm, None)
+        graph.delete()

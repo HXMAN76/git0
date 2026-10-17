@@ -119,7 +119,7 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 | `POST /api/{t}/commits` | `CommitRequest` → `{commit, retries}` | A | done |
 | `GET /api/{t}/facts/{id}/why` | → why-path rows | A | done |
 | `GET /api/{t}/branches/{name}/procedures` | → `Procedure[]` | A | done |
-| `POST /api/{t}/agents/{agent}/messages` (SSE) | `{message, session_id}` → events `token`, `commit`, `error`, `: ping` every 15 s | B `agents.step` | P1 |
+| `POST /api/{t}/agents/{agent}/messages` | `{message, session_id}` → `AgentReply` (plain JSON; unknown agent 404). SSE streaming (`token`, `commit`, `error`, `: ping` every 15 s) is issue #10 | B `agents.step` | done (JSON) |
 | `POST /api/{t}/merge/preview` | `{source, target}` → `MergeResult` | A `plan_merge` | done |
 | `POST /api/{t}/merge/resolve` | `{source, target, choices, agent_id?, target_head?, source_head?}` → `MergeApplied` (`invalidated` = facts for the Arbiter to re-derive). Send the previewed heads back: if either branch moved since, 409 "preview again" | A `apply_merge` | done |
 | `POST /api/{t}/revert` | `{branch, commit_id, agent_id?}` → `RevertResult` | A `revert` | done |
