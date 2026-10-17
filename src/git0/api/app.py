@@ -1,6 +1,7 @@
 """FastAPI app (Person D owns routes/UI wiring; Person A owns the repo calls behind them)."""
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager, suppress
@@ -9,7 +10,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from redis.exceptions import ResponseError
@@ -298,26 +299,6 @@ async def revert_commit(tenant: str, req: RevertRequest) -> RevertResult:
     return result
 
 
-class MessageRequest(BaseModel):
-    message: str = Field(min_length=1)
-    session_id: str = Field(default_factory=new_id)  # the UI keeps one per chat tab so turns group together
-
-
-@app.post("/api/{tenant}/agents/{agent_id}/messages")
-async def agent_message(
-    tenant: str, agent_id: str, req: MessageRequest, llm: Annotated[LLMCall, Depends(get_llm)]
-) -> AgentReply:
-    """One chat turn: the agent reads its branch, makes one LLM call and commits. Plain JSON for now;
-    SSE token streaming is issue #10. An LLM failure raises before any write and comes back as 502."""
-    agent = AGENTS.get(agent_id)
-    if agent is None:
-        raise HTTPException(404, f"unknown agent {agent_id!r}; one of {sorted(AGENTS)}")
-    repo = await repo_for(tenant)
-    reply = await step(agent, repo, req.message, req.session_id, tenant=tenant, llm=llm)
-    await repo.touch()  # chatting without a page reload still counts as activity for the room sweep
-    return reply
-
-
 @app.post("/api/{tenant}/agents/{agent_id}/kill")
 async def kill_agent(tenant: str, agent_id: str) -> HandoffResult:
     """Hand the agent's branch to its successor (agent-2, agent-3, ...). Unknown agent or branch is 404."""
@@ -341,6 +322,57 @@ async def commit(tenant: str, req: CommitRequest) -> dict:
 @app.get("/api/{tenant}/facts/{fact_id}/why")
 async def why(tenant: str, fact_id: str) -> list[dict]:
     return await (await repo_for(tenant)).why(fact_id)
+
+
+class MessageRequest(BaseModel):
+    text: str = Field(min_length=1)
+    session_id: str | None = None
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.post("/api/{tenant}/agents/{agent_id}/messages")
+async def agent_message(
+    tenant: str, agent_id: str, req: MessageRequest, llm: Annotated[LLMCall, Depends(get_llm)]
+) -> StreamingResponse:
+    """Run one agent turn and stream SSE events: token (reply text), commit (ids), error."""
+    spec = AGENTS.get(agent_id)
+    if spec is None:
+        raise HTTPException(404, f"unknown agent: {agent_id!r}")
+    repo = await repo_for(tenant)
+    session_id = req.session_id or new_id()
+
+    async def generate():
+        try:
+            reply: AgentReply = await step(spec, repo, req.text, session_id, tenant=tenant, llm=llm)
+            await repo.touch()
+            yield _sse("token", {"text": reply.text, "agent_id": reply.agent_id})
+            yield _sse(
+                "commit",
+                {
+                    "commit_id": reply.commit_id,
+                    "cited_fact_ids": reply.cited_fact_ids,
+                    "branch": reply.branch,
+                    "agent_id": reply.agent_id,
+                    "usage": reply.usage.model_dump() if reply.usage else None,
+                },
+            )
+        except LLMError as exc:
+            yield _sse("error", {"message": str(exc)})
+        except Exception as exc:
+            logger.exception("agent step failed: tenant=%s agent=%s", tenant, agent_id)
+            yield _sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # tells Caddy/nginx not to buffer SSE
+        },
+    )
 
 
 if WEB_DIST.is_dir():  # single deploy: FastAPI serves the built React app (mounted last)

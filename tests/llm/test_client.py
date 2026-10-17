@@ -243,7 +243,7 @@ def test_default_client_passes_configured_timeout(tmp_path, monkeypatch):
         "get_settings",
         lambda: Settings(groq_api_key="g", gemini_api_key="m", llm_timeout_s=11, llm_cache_dir=str(tmp_path)),
     )
-    groq, gemini = mod._default_client().providers
+    groq, gemini, *_ = mod._default_client().providers
     assert groq._client.timeout == 11
     assert gemini._client._api_client._http_options.timeout == 11000
 

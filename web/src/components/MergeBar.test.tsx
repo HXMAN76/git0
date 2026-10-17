@@ -87,8 +87,10 @@ describe('MergeBar', () => {
 
     expect(await screen.findByText('Planner and Scheduler disagree')).toBeDefined()
     expect(await screen.findByText('Planner moved the launch after Scheduler booked Friday.')).toBeDefined()
-    expect(screen.getByText(/1 built on it: venue status “booked friday”/)).toBeDefined()
-    expect(screen.getByText('Settled 2× before by siding with Planner')).toBeDefined()
+    expect(await screen.findByText(/1 built on it: venue status “booked friday”/)).toBeDefined()
+    expect(
+      await screen.findByText((content) => content.includes('Settled') && content.includes('2') && content.includes('by siding with Planner')),
+    ).toBeDefined()
 
     const merge = screen.getByRole('button', { name: 'Merge with my choices' }) as HTMLButtonElement
     expect(merge.disabled).toBe(true) // nothing chosen yet

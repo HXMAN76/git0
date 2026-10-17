@@ -43,7 +43,7 @@ export function ConflictCard({ conflict: c, source, explanation, choice, onChoos
       <h3 className="font-semibold text-amber-300">{headline(c, source)}</h3>
       <p className="text-neutral-300">
         About the <b>{topic(c.key)}</b>
-        {c.base && <> (was “{c.base.o}”)</>}.
+        {c.base && <> (was "{c.base.o}")</>}.
         {c.reason === 'dependency' && (
           <> Work was built on the old value, so changing it leaves that work stale.</>
         )}
@@ -63,11 +63,11 @@ export function ConflictCard({ conflict: c, source, explanation, choice, onChoos
               }`}
             >
               <span className="block text-xs text-neutral-400">{s.label} says</span>
-              <span className="block font-medium text-white">{s.fact ? `“${s.fact.o}”` : 'remove it'}</span>
+              <span className="block font-medium text-white">{s.fact ? `"${s.fact.o}"` : 'remove it'}</span>
               {s.fact?.agent_id && <span className="block text-xs text-neutral-500">by {s.fact.agent_id}</span>}
               {s.deps.length > 0 && (
                 <span className="mt-1 block text-xs text-neutral-400">
-                  {s.deps.length} built on it: {s.deps.map((d) => `${topic(d.key)} “${d.o}”`).join(', ')}
+                  {`${s.deps.length} built on it: ${s.deps.map((d) => `${topic(d.key)} “${d.o}”`).join(', ')}`}
                 </span>
               )}
             </button>

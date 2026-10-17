@@ -239,7 +239,8 @@ def _default_client() -> LLMClient:
         if s.groq_api_key:
             providers.append(GroqProvider(s.groq_api_key, s.groq_model, s.llm_timeout_s))
         if s.gemini_api_key:
-            providers.append(GeminiProvider(s.gemini_api_key, s.gemini_model, s.llm_timeout_s))
+            for model in [s.gemini_model, *s.gemini_fallback_models]:
+                providers.append(GeminiProvider(s.gemini_api_key, model, s.llm_timeout_s))
         _default = LLMClient(
             providers,
             s.llm_cache_dir,

@@ -1,151 +1,279 @@
 // Owner: Person D — see docs/team/person-d-ui-deploy.md
-// Left column: one chat per agent. Each send is one agent turn on the server
-// (POST /api/{tenant}/agents/{agent}/messages -> agents.step): the agent reads its own memory branch,
-// makes one LLM call and commits what it learned. Plain JSON for now; token streaming is issue #10.
-// The thread lives in this component only: memory is what the agent committed, not this list.
+// Three agent tabs (Planner / Scheduler / Notes). Each streams tokens via SSE, then emits
+// cited fact IDs up to App so WhyPath and MemoryCanvas can highlight them.
 
 import { useEffect, useRef, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { api } from '../api/client'
-import type { components } from '../api/schema'
-import { ApiError } from '../lib/apiError'
-import { AGENT_BRANCHES, useMemoryChanged } from '../lib/branches'
 import type { ChatPrompt } from './DemoGuide'
-import { ErrorBanner } from './ErrorBanner'
+import { AGENT_BRANCHES } from '../lib/branches'
 
 type AgentId = (typeof AGENT_BRANCHES)[number]['id']
-type Reply = components['schemas']['AgentReply']
-type Turn = { from: 'you'; text: string } | { from: 'agent'; reply: Reply }
 
-const HINTS: Record<AgentId, string> = {
-  planner: 'Owns dates, owners and budgets. Try: "The launch moved to Monday."',
-  scheduler: 'Turns the plan into tasks. Try: "What is booked for the launch?"',
-  notes: 'Keeps decisions and contacts. Try: "Who is the caterer contact?"',
+interface Message {
+  role: 'user' | 'agent'
+  text: string
+  cited_fact_ids?: string[]
+  error?: boolean
+  streaming?: boolean
 }
 
-const newSession = () => `chat_${crypto.randomUUID().slice(0, 8)}`
-
-async function send(tenant: string, agent: AgentId, message: string, session_id: string): Promise<Reply> {
-  const { data, error } = await api.POST('/api/{tenant}/agents/{agent_id}/messages', {
-    params: { path: { tenant, agent_id: agent } },
-    body: { message, session_id },
-  })
-  if (error) throw new ApiError(error)
-  return data
-}
-
-type Props = {
+interface Props {
   tenant: string
   /** A message to put in the box (the demo guide's step 1); a new object each click. The visitor still sends it. */
   prompt?: ChatPrompt | null
+  onFactClick?: (factId: string) => void
 }
 
-export function ChatPanel({ tenant, prompt = null }: Props) {
-  const [agent, setAgent] = useState<AgentId>('planner')
-  const [threads, setThreads] = useState<Record<AgentId, Turn[]>>({ planner: [], scheduler: [], notes: [] })
-  // One session per agent tab, so the server groups this visitor's turns with that agent.
-  const [sessions] = useState(() => ({ planner: newSession(), scheduler: newSession(), notes: newSession() }))
-  const [draft, setDraft] = useState('')
-  // Adjust state while rendering when a new prompt arrives (React's recommended alternative to an effect).
+function useAgentChat(tenant: string, agentId: AgentId) {
+  const [messages, setMessages] = useState<Message[]>([])
+  const [busy, setBusy] = useState(false)
+  const sessionId = useRef(crypto.randomUUID())
+
+  function send(text: string) {
+    if (busy || !text.trim()) return
+    setBusy(true)
+    setMessages((prev) => [...prev, { role: 'user', text }])
+    setMessages((prev) => [...prev, { role: 'agent', text: '', streaming: true }])
+
+    const url = `/api/${tenant}/agents/${agentId}/messages`
+    // SSE via POST: EventSource only supports GET, so we use fetch + ReadableStream.
+    let cancelled = false
+    let agentText = ''
+    const ctrl = new AbortController()
+
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, session_id: sessionId.current }),
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`
+          try { msg = ((await res.json()) as { detail?: string }).detail ?? msg } catch { /* not JSON */ }
+          throw new Error(msg)
+        }
+        if (!res.body) throw new Error(`HTTP ${res.status}`)
+        const reader = res.body.getReader()
+        const dec = new TextDecoder()
+        let buf = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done || cancelled) break
+          buf += dec.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() ?? ''
+
+          for (const block of parts) {
+            let eventName = 'message'
+            let dataLine = ''
+            for (const line of block.split('\n')) {
+              if (line.startsWith('event: ')) eventName = line.slice(7).trim()
+              if (line.startsWith('data: ')) dataLine = line.slice(6).trim()
+            }
+            if (!dataLine) continue
+            try {
+              const payload = JSON.parse(dataLine)
+              if (eventName === 'token') {
+                agentText = payload.text ?? agentText
+                setMessages((prev) => {
+                  const next = [...prev]
+                  next[next.length - 1] = { role: 'agent', text: agentText, streaming: true }
+                  return next
+                })
+              } else if (eventName === 'commit') {
+                const citedIds: string[] = payload.cited_fact_ids ?? []
+                setMessages((prev) => {
+                  const next = [...prev]
+                  next[next.length - 1] = { role: 'agent', text: agentText, cited_fact_ids: citedIds, streaming: false }
+                  return next
+                })
+              } else if (eventName === 'error') {
+                setMessages((prev) => {
+                  const next = [...prev]
+                  next[next.length - 1] = { role: 'agent', text: payload.message ?? 'Unknown error', error: true, streaming: false }
+                  return next
+                })
+              }
+            } catch {
+              // malformed SSE block — skip
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setMessages((prev) => {
+          const next = [...prev]
+          next[next.length - 1] = { role: 'agent', text: String(err), error: true, streaming: false }
+          return next
+        })
+      })
+      .finally(() => { if (!cancelled) setBusy(false) })
+  }
+
+  return { messages, busy, send }
+}
+
+function AgentChat({
+  tenant,
+  agentId,
+  color,
+  onFactClick,
+  externalDraft,
+  onDraftConsumed,
+}: {
+  tenant: string
+  agentId: AgentId
+  color: string
+  onFactClick?: (id: string) => void
+  externalDraft?: string
+  onDraftConsumed?: () => void
+}) {
+  const { messages, busy, send } = useAgentChat(tenant, agentId)
+  const [input, setInput] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const onDraftConsumedRef = useRef(onDraftConsumed)
+  onDraftConsumedRef.current = onDraftConsumed
+
+  // Sync external draft into the text box via effect to avoid setState-in-render on the parent.
+  useEffect(() => {
+    if (externalDraft) {
+      setInput(externalDraft)
+      inputRef.current?.focus()
+      onDraftConsumedRef.current?.()
+    }
+  }, [externalDraft])
+
+  function submit() {
+    const t = input.trim()
+    if (!t) return
+    setInput('')
+    send(t)
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+  }
+
+  const inputId = `chat-input-${agentId}`
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2" aria-live="polite">
+        {messages.length === 0 && (
+          <p className="text-xs text-neutral-500 text-center mt-8">Send a message to start.</p>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+            <div className={`max-w-[85%] rounded px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+              m.role === 'user'
+                ? 'bg-neutral-700 text-neutral-100'
+                : m.error
+                ? 'bg-red-950 border border-red-700 text-red-200'
+                : 'bg-neutral-800 text-neutral-100'
+            }`}>
+              {m.error
+                ? <p role="alert">{m.text}</p>
+                : m.text || (m.streaming ? <span className="animate-pulse text-neutral-400">…</span> : '')}
+            </div>
+            {m.cited_fact_ids && m.cited_fact_ids.length > 0 && (
+              <div className="flex flex-wrap gap-1 px-1">
+                {m.cited_fact_ids.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => onFactClick?.(id)}
+                    className="rounded bg-neutral-700 px-2 py-0.5 text-xs hover:bg-neutral-600"
+                    style={{ color }}
+                    title={`why? ${id}`}
+                    aria-label={`why? ${id}`}
+                  >
+                    why?
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="border-t border-neutral-800 p-2 flex gap-2">
+        <label htmlFor={inputId} className="sr-only">Message {agentId}</label>
+        <input
+          id={inputId}
+          ref={inputRef}
+          className="flex-1 rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 outline-none focus:ring-1 focus:ring-neutral-600"
+          placeholder={busy ? 'Thinking…' : 'Message…'}
+          value={input}
+          disabled={busy}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), submit())}
+        />
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy || !input.trim()}
+          className="rounded bg-neutral-700 px-3 py-1.5 text-sm text-neutral-100 disabled:opacity-40 hover:bg-neutral-600"
+        >
+          Send
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export function ChatPanel({ tenant, prompt = null, onFactClick }: Props) {
+  const [activeAgent, setActiveAgent] = useState<AgentId>(AGENT_BRANCHES[0].id)
+  const [pendingDraft, setPendingDraft] = useState<{ agent: AgentId; text: string } | null>(null)
+
+  // State-during-render: pipe DemoGuide prompt into the active agent's text box.
   const [seenPrompt, setSeenPrompt] = useState<ChatPrompt | null>(null)
   if (prompt !== seenPrompt) {
     setSeenPrompt(prompt)
     if (prompt) {
-      setAgent(prompt.agent)
-      setDraft(prompt.text)
+      setActiveAgent(prompt.agent as AgentId)
+      setPendingDraft({ agent: prompt.agent as AgentId, text: prompt.text })
     }
   }
-  // After the guide fills the box, Enter should send it, not re-press the guide button.
-  const input = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    if (prompt) input.current?.focus()
-  }, [prompt])
-  const memoryChanged = useMemoryChanged(tenant)
-  const append = (a: AgentId, t: Turn) => setThreads((all) => ({ ...all, [a]: [...all[a], t] }))
-
-  const turn = useMutation({
-    mutationFn: (v: { agent: AgentId; text: string }) => send(tenant, v.agent, v.text, sessions[v.agent]),
-    onSuccess: (reply, v) => {
-      append(v.agent, { from: 'agent', reply })
-      return memoryChanged()
-    },
-  })
-
-  function submit(e: React.FormEvent) {
-    e.preventDefault()
-    const text = draft.trim()
-    if (!text || turn.isPending) return
-    append(agent, { from: 'you', text })
-    setDraft('')
-    turn.mutate({ agent, text })
-  }
-
-  const thread = threads[agent]
-  const failed = turn.isError && turn.variables?.agent === agent
 
   return (
     <div className="flex h-full flex-col">
-      <div role="tablist" aria-label="Agents" className="flex gap-1 border-b border-neutral-800 p-2">
-        {AGENT_BRANCHES.map((b) => (
+      <div role="tablist" aria-label="Agents" className="flex border-b border-neutral-800">
+        {AGENT_BRANCHES.map((a) => (
           <button
-            key={b.id}
+            key={a.id}
             type="button"
             role="tab"
-            aria-selected={agent === b.id}
-            onClick={() => setAgent(b.id)}
-            className={`flex items-center gap-1.5 rounded px-3 py-1 text-sm ${
-              agent === b.id ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-neutral-200'
+            aria-selected={activeAgent === a.id}
+            onClick={() => setActiveAgent(a.id)}
+            className={`flex-1 py-2 text-xs font-medium transition-colors ${
+              activeAgent === a.id ? 'border-b-2 text-white' : 'text-neutral-400 hover:text-neutral-200'
             }`}
+            style={activeAgent === a.id ? { borderColor: a.color } : {}}
           >
-            <span className="inline-block h-2 w-2 rounded-full" style={{ background: b.color }} />
-            {b.label}
+            {a.label}
           </button>
         ))}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3" aria-live="polite">
-        {thread.length === 0 && <p className="text-sm text-neutral-500">{HINTS[agent]}</p>}
-        {thread.map((t, i) =>
-          t.from === 'you' ? (
-            <p key={i} className="ml-6 self-end rounded bg-neutral-800 px-3 py-2 text-sm text-white">
-              {t.text}
-            </p>
-          ) : (
-            <div key={i} className="mr-6 rounded border border-neutral-800 px-3 py-2 text-sm text-neutral-200">
-              <p className="whitespace-pre-wrap">{t.reply.text}</p>
-              <p className="mt-1 text-xs text-neutral-500">
-                Saved to {t.reply.agent_id}'s memory
-                {t.reply.cited_fact_ids?.length ? ` · used ${t.reply.cited_fact_ids.length} facts` : ''}
-              </p>
-            </div>
-          ),
-        )}
-        {turn.isPending && turn.variables?.agent === agent && (
-          <p className="text-sm text-neutral-500">Thinking…</p>
-        )}
-        {failed && <ErrorBanner>The agent could not answer: {turn.error.message}</ErrorBanner>}
-      </div>
-
-      <form onSubmit={submit} className="flex gap-2 border-t border-neutral-800 p-2">
-        <label htmlFor="chat-input" className="sr-only">
-          Message {agent}
-        </label>
-        <input
-          id="chat-input"
-          ref={input}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={`Message ${AGENT_BRANCHES.find((b) => b.id === agent)!.label}…`}
-          className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-white placeholder:text-neutral-500"
-        />
-        <button
-          type="submit"
-          disabled={turn.isPending || !draft.trim()}
-          className="rounded bg-sky-700 px-3 py-1 text-sm text-white disabled:opacity-40"
+      {/* Keep all agents mounted so history is preserved when switching tabs. */}
+      {AGENT_BRANCHES.map((a) => (
+        <div
+          key={a.id}
+          className={`min-h-0 flex-1 ${a.id === activeAgent ? 'flex flex-col' : 'hidden'}`}
+          role={a.id === activeAgent ? 'tabpanel' : undefined}
+          aria-hidden={a.id !== activeAgent || undefined}
         >
-          Send
-        </button>
-      </form>
+          <AgentChat
+            tenant={tenant}
+            agentId={a.id}
+            color={a.color}
+            onFactClick={onFactClick}
+            externalDraft={pendingDraft?.agent === a.id ? pendingDraft.text : undefined}
+            onDraftConsumed={() => setPendingDraft(null)}
+          />
+        </div>
+      ))}
     </div>
   )
 }

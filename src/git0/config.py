@@ -16,7 +16,15 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-20b"
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-3.8-flash"
+    gemini_model: str = "gemini-3.6-flash"
+    # Fallback chain tried in order when the primary gemini_model returns 503.
+    # Each entry creates an independent GeminiProvider; first success wins.
+    gemini_fallback_models: list[str] = [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash-lite",
+    ]
     llm_cache_dir: str = ".cache/llm"
     llm_offline: bool = False  # LLM_OFFLINE=1: serve cached extractions only (demo safety net)
     llm_tenant_rpm: int = 20  # per-tenant LLM calls/min so one judge cannot burn the shared quota

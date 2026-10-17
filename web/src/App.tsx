@@ -7,6 +7,7 @@ import { MemoryCanvas } from './components/MemoryCanvas'
 import { MergeBar } from './components/MergeBar'
 import { Scorecard } from './components/Scorecard'
 import { TenantGate } from './components/TenantGate'
+import { WhyPath } from './components/WhyPath'
 import { resolveTenant } from './lib/tenant'
 
 type CenterTab = 'memory' | 'history'
@@ -24,6 +25,14 @@ export default function App() {
   const [prompt, setPrompt] = useState<ChatPrompt | null>(null)
   // One room per visitor (or ?team=<id> for a shared link), resolved once per page load.
   const [tenant] = useState(() => resolveTenant(window.location.search, window.localStorage))
+  // WhyPath highlight: node IDs to light up in MemoryCanvas after a "why?" click.
+  const [highlight, setHighlight] = useState<string[]>([])
+  const [whyFactId, setWhyFactId] = useState<string | null>(null)
+
+  function handleFactClick(factId: string) {
+    setWhyFactId(factId)
+    setTab('memory')
+  }
 
   return (
     <div className="flex min-h-dvh flex-col bg-neutral-950 text-neutral-100 lg:h-dvh">
@@ -38,9 +47,15 @@ export default function App() {
         {(t) => (
           <>
             <DemoGuide tenant={t} onPrompt={setPrompt} />
+            {/* WhyPath is invisible; fetches provenance for a clicked fact and pushes node IDs into highlight. */}
+            <WhyPath tenant={t} factId={whyFactId} onHighlight={(ids) => { setHighlight(ids); setWhyFactId(null) }} />
             <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[340px_1fr_300px]">
               <aside className="h-[45vh] min-h-0 border-neutral-800 lg:h-auto lg:border-r">
-                <ChatPanel tenant={t} prompt={prompt} />
+                <ChatPanel
+                  tenant={t}
+                  prompt={prompt}
+                  onFactClick={handleFactClick}
+                />
               </aside>
 
               <main className="flex h-[85vh] min-h-0 flex-col border-y border-neutral-800 lg:h-auto lg:border-y-0">
@@ -61,9 +76,28 @@ export default function App() {
                     </button>
                   ))}
                   {tab === 'memory' && <BranchPicker tenant={t} value={branch} onChange={setBranch} />}
+                  {highlight.length > 0 && tab === 'memory' && (
+                    <button
+                      type="button"
+                      onClick={() => setHighlight([])}
+                      className="ml-2 rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:text-white"
+                      title="Clear why-path highlight"
+                    >
+                      ✕ why-path
+                    </button>
+                  )}
                 </div>
                 <div role="tabpanel" className="min-h-0 flex-1">
-                  {tab === 'memory' ? <MemoryCanvas tenant={t} branch={branch} /> : <CommitDag tenant={t} />}
+                  {tab === 'memory' ? (
+                    <MemoryCanvas
+                      tenant={t}
+                      branch={branch}
+                      highlight={highlight}
+                      onNodeClick={() => setHighlight([])}
+                    />
+                  ) : (
+                    <CommitDag tenant={t} />
+                  )}
                 </div>
               </main>
 

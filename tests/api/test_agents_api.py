@@ -1,3 +1,5 @@
+import json
+
 from falkordb import FalkorDB
 from fastapi.testclient import TestClient
 
@@ -6,6 +8,24 @@ from git0.agents.extract import ExtractedFact, ExtractedLink, Extraction
 from git0.api.app import app, get_llm
 from git0.config import get_settings
 from git0.llm.client import LLMError, Usage
+
+
+def parse_sse(text: str) -> dict:
+    """Parse an SSE body into {event_name: data_dict} for the last occurrence of each event."""
+    events: dict = {}
+    for block in text.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        name, data = "message", {}
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                name = line[7:].strip()
+            elif line.startswith("data: "):
+                data = json.loads(line[6:].strip())
+        events[name] = data
+    return events
+
 
 GRAPH = "team_ci_agents"
 
@@ -124,28 +144,31 @@ def test_agent_message_commits_one_turn_on_the_agents_branch_and_llm_error_is_50
             before = len(client.get(f"{t}/branches/scheduler/log").json())
 
             r = client.post(
-                f"{t}/agents/scheduler/messages", json={"message": "book the venue", "session_id": "s1"}
+                f"{t}/agents/scheduler/messages", json={"text": "book the venue", "session_id": "s1"}
             )
             assert r.status_code == 200
-            reply = r.json()
-            assert reply["agent_id"] == "scheduler" and reply["branch"] == "scheduler"
-            assert reply["text"] == "Re-planned." and reply["usage"]["prompt_tokens"] == 5
+            events = parse_sse(r.text)
+            token, commit = events["token"], events["commit"]
+            assert token["agent_id"] == "scheduler" and commit["branch"] == "scheduler"
+            assert token["text"] == "Re-planned." and commit["usage"]["prompt_tokens"] == 5
             assert calls == [Extraction]
 
             log = client.get(f"{t}/branches/scheduler/log").json()
-            assert len(log) == before + 1 and log[0]["id"] == reply["commit_id"]
+            assert len(log) == before + 1 and log[0]["id"] == commit["commit_id"]
             facts = {f["key"]: f["o"] for f in client.get(f"{t}/branches/scheduler/checkout").json()}
             assert facts["venue|status"] == "booked monday"
 
-            assert client.post(f"{t}/agents/ghost/messages", json={"message": "hi"}).status_code == 404
-            assert client.post(f"{t}/agents/planner/messages", json={"message": ""}).status_code == 422
+            assert client.post(f"{t}/agents/ghost/messages", json={"text": "hi"}).status_code == 404
+            assert client.post(f"{t}/agents/planner/messages", json={"text": ""}).status_code == 422
 
             async def failing(prompt, schema, *, system, tenant):
                 raise LLMError("all LLM providers failed: boom")
 
             app.dependency_overrides[get_llm] = lambda: failing
-            down = client.post(f"{t}/agents/planner/messages", json={"message": "move launch to monday"})
-            assert down.status_code == 502 and down.json() == {"detail": "all LLM providers failed: boom"}
+            down = client.post(f"{t}/agents/planner/messages", json={"text": "move launch to monday"})
+            # LLM errors are emitted as SSE error events (200 status, streaming already started).
+            assert down.status_code == 200
+            assert parse_sse(down.text)["error"]["message"] == "all LLM providers failed: boom"
             # A failed turn writes nothing.
             assert client.get(f"{t}/branches/planner/log").json()[0]["kind"] == "seed"
     finally:
@@ -163,7 +186,7 @@ def test_agent_message_keeps_the_room_alive():
             app.dependency_overrides[get_llm] = lambda: fake_llm(calls)
             assert client.post("/api/ci_chat_touch/seed").status_code == 200
             graph.query("MATCH (r:Room) SET r.last_seen = 0")  # pretend the room went quiet long ago
-            r = client.post("/api/ci_chat_touch/agents/planner/messages", json={"message": "hello"})
+            r = client.post("/api/ci_chat_touch/agents/planner/messages", json={"text": "hello"})
             assert r.status_code == 200
             assert graph.ro_query(stamp).result_set[0][0] > 0
     finally:
