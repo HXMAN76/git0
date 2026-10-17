@@ -127,4 +127,7 @@ def test_uninitialised_tenant_is_404_not_500():
     with TestClient(app) as client:
         r = client.get("/api/ci_never_made/scorecard")
     assert r.status_code == 404
-    assert "tenant not initialised" in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert "tenant not initialised" in detail
+    # names the real tenant, not a "{tenant}" placeholder, so the UI error is actionable
+    assert "/api/ci_never_made/seed" in detail and "{tenant}" not in detail
