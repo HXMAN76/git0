@@ -67,7 +67,7 @@ export function ConflictCard({ conflict: c, source, explanation, choice, onChoos
               {s.fact?.agent_id && <span className="block text-xs text-neutral-500">by {s.fact.agent_id}</span>}
               {s.deps.length > 0 && (
                 <span className="mt-1 block text-xs text-neutral-400">
-                  {s.deps.length} built on it: {s.deps.map((d) => `${topic(d.key)} "${d.o}"`).join(', ')}
+                  {`${s.deps.length} built on it: ${s.deps.map((d) => `${topic(d.key)} “${d.o}”`).join(', ')}`}
                 </span>
               )}
             </button>

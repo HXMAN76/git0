@@ -29,10 +29,6 @@ function renderCard() {
   )
 }
 
-vi.mock('../api/client', () => ({
-  api: { GET: vi.fn(() => Promise.resolve({ data: null, error: null })) },
-}))
-
 describe('Scorecard', () => {
   afterEach(() => {
     cleanup()

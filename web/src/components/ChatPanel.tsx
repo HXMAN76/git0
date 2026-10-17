@@ -2,7 +2,7 @@
 // Three agent tabs (Planner / Scheduler / Notes). Each streams tokens via SSE, then emits
 // cited fact IDs up to App so WhyPath and MemoryCanvas can highlight them.
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChatPrompt } from './DemoGuide'
 import { AGENT_BRANCHES } from '../lib/branches'
 
@@ -21,7 +21,6 @@ interface Props {
   /** A message to put in the box (the demo guide's step 1); a new object each click. The visitor still sends it. */
   prompt?: ChatPrompt | null
   onFactClick?: (factId: string) => void
-  onAgentChange?: (agentId: string) => void
 }
 
 function useAgentChat(tenant: string, agentId: AgentId) {
@@ -48,7 +47,12 @@ function useAgentChat(tenant: string, agentId: AgentId) {
       signal: ctrl.signal,
     })
       .then(async (res) => {
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`
+          try { msg = ((await res.json()) as { detail?: string }).detail ?? msg } catch { /* not JSON */ }
+          throw new Error(msg)
+        }
+        if (!res.body) throw new Error(`HTTP ${res.status}`)
         const reader = res.body.getReader()
         const dec = new TextDecoder()
         let buf = ''
@@ -128,17 +132,19 @@ function AgentChat({
 }) {
   const { messages, busy, send } = useAgentChat(tenant, agentId)
   const [input, setInput] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const onDraftConsumedRef = useRef(onDraftConsumed)
+  onDraftConsumedRef.current = onDraftConsumed
 
-  // State-during-render: sync external draft into the text box.
-  const [seenDraft, setSeenDraft] = useState<string | undefined>(undefined)
-  if (externalDraft !== seenDraft) {
-    setSeenDraft(externalDraft)
+  // Sync external draft into the text box via effect to avoid setState-in-render on the parent.
+  useEffect(() => {
     if (externalDraft) {
       setInput(externalDraft)
-      onDraftConsumed?.()
+      inputRef.current?.focus()
+      onDraftConsumedRef.current?.()
     }
-  }
+  }, [externalDraft])
 
   function submit() {
     const t = input.trim()
@@ -148,9 +154,11 @@ function AgentChat({
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
   }
 
+  const inputId = `chat-input-${agentId}`
+
   return (
     <div className="flex h-full flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2" aria-live="polite">
         {messages.length === 0 && (
           <p className="text-xs text-neutral-500 text-center mt-8">Send a message to start.</p>
         )}
@@ -163,7 +171,9 @@ function AgentChat({
                 ? 'bg-red-950 border border-red-700 text-red-200'
                 : 'bg-neutral-800 text-neutral-100'
             }`}>
-              {m.text || (m.streaming ? <span className="animate-pulse text-neutral-400">…</span> : '')}
+              {m.error
+                ? <p role="alert">{m.text}</p>
+                : m.text || (m.streaming ? <span className="animate-pulse text-neutral-400">…</span> : '')}
             </div>
             {m.cited_fact_ids && m.cited_fact_ids.length > 0 && (
               <div className="flex flex-wrap gap-1 px-1">
@@ -174,7 +184,8 @@ function AgentChat({
                     onClick={() => onFactClick?.(id)}
                     className="rounded bg-neutral-700 px-2 py-0.5 text-xs hover:bg-neutral-600"
                     style={{ color }}
-                    title={`Why: ${id}`}
+                    title={`why? ${id}`}
+                    aria-label={`why? ${id}`}
                   >
                     why?
                   </button>
@@ -187,7 +198,10 @@ function AgentChat({
       </div>
 
       <div className="border-t border-neutral-800 p-2 flex gap-2">
+        <label htmlFor={inputId} className="sr-only">Message {agentId}</label>
         <input
+          id={inputId}
+          ref={inputRef}
           className="flex-1 rounded bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 outline-none focus:ring-1 focus:ring-neutral-600"
           placeholder={busy ? 'Thinking…' : 'Message…'}
           value={input}
@@ -208,7 +222,7 @@ function AgentChat({
   )
 }
 
-export function ChatPanel({ tenant, prompt = null, onFactClick, onAgentChange }: Props) {
+export function ChatPanel({ tenant, prompt = null, onFactClick }: Props) {
   const [activeAgent, setActiveAgent] = useState<AgentId>(AGENT_BRANCHES[0].id)
   const [pendingDraft, setPendingDraft] = useState<{ agent: AgentId; text: string } | null>(null)
 
@@ -222,19 +236,16 @@ export function ChatPanel({ tenant, prompt = null, onFactClick, onAgentChange }:
     }
   }
 
-  function switchAgent(id: AgentId) {
-    setActiveAgent(id)
-    onAgentChange?.(id)
-  }
-
   return (
     <div className="flex h-full flex-col">
-      <div className="flex border-b border-neutral-800">
+      <div role="tablist" aria-label="Agents" className="flex border-b border-neutral-800">
         {AGENT_BRANCHES.map((a) => (
           <button
             key={a.id}
             type="button"
-            onClick={() => switchAgent(a.id)}
+            role="tab"
+            aria-selected={activeAgent === a.id}
+            onClick={() => setActiveAgent(a.id)}
             className={`flex-1 py-2 text-xs font-medium transition-colors ${
               activeAgent === a.id ? 'border-b-2 text-white' : 'text-neutral-400 hover:text-neutral-200'
             }`}
@@ -247,7 +258,12 @@ export function ChatPanel({ tenant, prompt = null, onFactClick, onAgentChange }:
 
       {/* Keep all agents mounted so history is preserved when switching tabs. */}
       {AGENT_BRANCHES.map((a) => (
-        <div key={a.id} className={`min-h-0 flex-1 ${a.id === activeAgent ? 'flex flex-col' : 'hidden'}`}>
+        <div
+          key={a.id}
+          className={`min-h-0 flex-1 ${a.id === activeAgent ? 'flex flex-col' : 'hidden'}`}
+          role={a.id === activeAgent ? 'tabpanel' : undefined}
+          aria-hidden={a.id !== activeAgent || undefined}
+        >
           <AgentChat
             tenant={tenant}
             agentId={a.id}
