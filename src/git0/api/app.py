@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from redis.exceptions import ResponseError
 
 from git0 import __version__
+from git0.agents.handoff import HandoffResult, handoff
 from git0.config import get_settings
 from git0.core.db import close_db, ensure_schema, get_db, tenant_graph
 from git0.core.merge import apply_merge, plan_merge
@@ -25,7 +26,7 @@ from git0.core.models import (
     RevertResult,
     Scorecard,
 )
-from git0.core.repo import CommitConflictError, MemoryRepo
+from git0.core.repo import CommitConflictError, MemoryRepo, new_id
 from git0.core.revert import revert
 from git0.seed import seed
 
@@ -179,6 +180,15 @@ async def revert_commit(tenant: str, req: RevertRequest) -> RevertResult:
         return await revert(await repo_for(tenant), req.branch, req.commit_id, req.agent_id)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc
+
+
+@app.post("/api/{tenant}/agents/{agent_id}/kill")
+async def kill_agent(tenant: str, agent_id: str) -> HandoffResult:
+    """Hand the agent's branch to its successor (agent-2, agent-3, ...). Unknown agent or branch is 404."""
+    try:
+        return await handoff(await repo_for(tenant), agent_id, session_id=new_id())
+    except KeyError as exc:
+        raise HTTPException(404, str(exc.args[0])) from exc
 
 
 @app.post("/api/{tenant}/commits")
