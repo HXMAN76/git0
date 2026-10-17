@@ -196,15 +196,107 @@ async def test_gemini_provider_reads_real_sdk_response_types():
     assert raw == GOOD and (usage.prompt_tokens, usage.completion_tokens, usage.provider) == (9, 4, "gemini")
 
 
-@pytest.mark.llm
-@pytest.mark.skipif(not os.environ.get("GROQ_API_KEY"), reason="needs GROQ_API_KEY")
-async def test_live_groq_smoke(tmp_path):
+async def test_offline_replay_without_keys_hits_keyed_cache(tmp_path):
+    # Record with providers on models A/B; replay with no providers (no API keys) but the same models.
+    a, b = Fake("A", GOOD), Fake("B", GOOD)
+    rec = client(tmp_path, a, b, cache_models=["A", "B"])
+    await call(rec)
+    off = LLMClient([], tmp_path, offline=True, cache_models=["A", "B"])
+    out, usage = await call(off)
+    assert usage.cached and out.one.kind == "b" and (a.calls, b.calls) == (1, 0)
+    # A different configured model set is a different cache entry (so a model change re-records).
+    with pytest.raises(LLMError, match="offline"):
+        await call(LLMClient([], tmp_path, offline=True, cache_models=["A", "C"]))
+
+
+async def test_default_client_cache_key_ignores_which_keys_are_set(tmp_path, monkeypatch):
+    from git0.config import Settings
+    from git0.llm import client as mod
+
+    def build(**keys):
+        monkeypatch.setattr(mod, "_default", None)
+        monkeypatch.setattr(mod, "get_settings", lambda: Settings(llm_cache_dir=str(tmp_path), **keys))
+        return mod._default_client()
+
+    keyed = build(groq_api_key="g", gemini_api_key="m")
+    bare = build(groq_api_key=None, gemini_api_key=None, llm_offline=True)
+    assert keyed.providers and not bare.providers
+    assert keyed._key("s", "p", {}) == bare._key("s", "p", {})
+
+
+def test_provider_timeouts_are_bounded():
+    from git0.llm.client import GeminiProvider, GroqProvider
+
+    g = GroqProvider("k", "m", timeout_s=7)
+    assert g._client.timeout == 7 and g._client.max_retries == 0  # fallback, not SDK retries
+    m = GeminiProvider("k", "m", timeout_s=7)
+    assert m._client._api_client._http_options.timeout == 7000  # genai wants milliseconds
+
+
+def test_default_client_passes_configured_timeout(tmp_path, monkeypatch):
+    from git0.config import Settings
+    from git0.llm import client as mod
+
+    monkeypatch.setattr(mod, "_default", None)
+    monkeypatch.setattr(
+        mod,
+        "get_settings",
+        lambda: Settings(groq_api_key="g", gemini_api_key="m", llm_timeout_s=11, llm_cache_dir=str(tmp_path)),
+    )
+    groq, gemini = mod._default_client().providers
+    assert groq._client.timeout == 11
+    assert gemini._client._api_client._http_options.timeout == 11000
+
+
+def test_timeout_setting_default_and_env(monkeypatch):
+    from git0.config import Settings
+
+    assert Settings().llm_timeout_s == 20
+    monkeypatch.setenv("LLM_TIMEOUT_S", "5")
+    assert Settings().llm_timeout_s == 5
+
+
+def _live_groq():
     from git0.config import get_settings
     from git0.llm.client import GroqProvider
 
     s = get_settings()
-    c = client(tmp_path, GroqProvider(s.groq_api_key, s.groq_model))
+    return GroqProvider(s.groq_api_key, s.groq_model)
+
+
+@pytest.mark.llm
+@pytest.mark.skipif(not os.environ.get("GROQ_API_KEY"), reason="needs GROQ_API_KEY")
+async def test_live_groq_smoke(tmp_path):
+    c = client(tmp_path, _live_groq())
     out, usage = await c.complete_json(
         "Alice owns the budget of 5k.", Inner, system="Extract.", tenant="live"
     )
     assert isinstance(out, Inner) and usage.prompt_tokens > 0
+
+
+@pytest.mark.llm
+@pytest.mark.skipif(not os.environ.get("GROQ_API_KEY"), reason="needs GROQ_API_KEY")
+async def test_live_groq_accepts_real_extraction_schema(tmp_path):
+    """Groq strict mode must accept the schema agents actually send, not just the toy one."""
+    from git0.agents.extract import Extraction, build_prompt
+    from git0.agents.specs import AGENTS
+
+    c = client(tmp_path, _live_groq())
+    prompt = build_prompt([], [], "The launch deadline is Friday and Alice owns the budget.")
+    out, usage = await c.complete_json(prompt, Extraction, system=AGENTS["planner"].prompt, tenant="live")
+    assert isinstance(out, Extraction) and out.reply and out.facts and usage.prompt_tokens > 0
+
+
+@pytest.mark.llm
+@pytest.mark.skipif(not os.environ.get("GROQ_API_KEY"), reason="needs GROQ_API_KEY")
+async def test_live_groq_accepts_real_explanations_schema(tmp_path):
+    from git0.agents.arbiter import SYSTEM, Explanations
+
+    c = client(tmp_path, _live_groq())
+    prompt = (
+        "Explain each conflict. Return one item per key, using the key exactly as given.\n\n"
+        "key: launch|deadline\nplanner says friday; scheduler says monday"
+    )
+    out, usage = await c.complete_json(prompt, Explanations, system=SYSTEM, tenant="live")
+    assert isinstance(out, Explanations) and [e.key for e in out.items] == ["launch|deadline"]
+    assert out.items[0].text and usage.prompt_tokens > 0

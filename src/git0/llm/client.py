@@ -75,10 +75,11 @@ class Provider(Protocol):
 class GroqProvider:
     """Primary: Groq `openai/gpt-oss-20b`, strict json_schema."""
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, timeout_s: float = 20):
         from groq import AsyncGroq
 
-        self.model, self._client = model, AsyncGroq(api_key=api_key)
+        # max_retries=0: LLMClient already falls back to Gemini, so SDK retries only delay that by minutes.
+        self.model, self._client = model, AsyncGroq(api_key=api_key, timeout=timeout_s, max_retries=0)
 
     async def __call__(self, system, prompt, name, schema):
         r = await self._client.chat.completions.create(
@@ -106,10 +107,13 @@ class GroqProvider:
 class GeminiProvider:
     """Fallback: Gemini Flash with a JSON response schema."""
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, timeout_s: float = 20):
         from google import genai
+        from google.genai import types
 
-        self.model, self._client = model, genai.Client(api_key=api_key)
+        # google-genai has no default timeout; HttpOptions.timeout is in milliseconds.
+        opts = types.HttpOptions(timeout=int(timeout_s * 1000))
+        self.model, self._client = model, genai.Client(api_key=api_key, http_options=opts)
 
     async def __call__(self, system, prompt, name, schema):
         from google.genai import types
@@ -161,16 +165,20 @@ class LLMClient:
         cache_dir: str | Path,
         offline: bool = False,
         limiter: TenantLimiter | None = None,
+        cache_models: list[str] | None = None,
     ):
         self.providers, self.cache_dir, self.offline = providers, Path(cache_dir), offline
         self.limiter = limiter
+        # The cache key uses the *configured* model names, not whichever providers got built, so an
+        # offline replay with no API keys hits entries recorded by a keyed run.
+        self.cache_models = cache_models if cache_models is not None else [p.model for p in providers]
 
     def _key(self, system: str, prompt: str, schema: dict) -> str:
         blob = {
             "system": system,
             "prompt": prompt,
             "schema": schema,
-            "models": [p.model for p in self.providers],
+            "models": self.cache_models,
         }
         return hashlib.sha256(json.dumps(blob, sort_keys=True).encode()).hexdigest()
 
@@ -229,10 +237,16 @@ def _default_client() -> LLMClient:
         s = get_settings()
         providers: list[Provider] = []
         if s.groq_api_key:
-            providers.append(GroqProvider(s.groq_api_key, s.groq_model))
+            providers.append(GroqProvider(s.groq_api_key, s.groq_model, s.llm_timeout_s))
         if s.gemini_api_key:
-            providers.append(GeminiProvider(s.gemini_api_key, s.gemini_model))
-        _default = LLMClient(providers, s.llm_cache_dir, s.llm_offline, TenantLimiter(s.llm_tenant_rpm))
+            providers.append(GeminiProvider(s.gemini_api_key, s.gemini_model, s.llm_timeout_s))
+        _default = LLMClient(
+            providers,
+            s.llm_cache_dir,
+            s.llm_offline,
+            TenantLimiter(s.llm_tenant_rpm),
+            cache_models=[s.groq_model, s.gemini_model],
+        )
     return _default
 
 
