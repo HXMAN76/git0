@@ -48,7 +48,9 @@ class Extraction(BaseModel):
     removed_keys: list[str] = Field(description="keys 'subject|predicate' the message retracts")
     derived: list[ExtractedLink]
     procedures: list[ExtractedProcedure]
-    cited_keys: list[str] = Field(description="keys 'subject|predicate' of facts the reply relies on")
+    cited_keys: list[str] = Field(
+        description="keys 'subject|predicate' the reply relies on or was asked about, even if no fact exists"
+    )
 
 
 def normalise_entity(s: str) -> str:

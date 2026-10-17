@@ -6,7 +6,8 @@ from git0.agents.base import AgentSpec
 _RULES = (
     "Use only facts listed in the context; never invent facts. "
     "Put the key 'subject|predicate' of every fact your reply relies on in `cited_keys`. "
-    "If the context lacks what is needed, say so in the reply and cite nothing for it."
+    "If the user asks about something the context lacks, do not guess: still put the key you looked for "
+    "(e.g. 'caterer|contact') in `cited_keys`, and the system will report it as not in team memory."
 )
 
 PLANNER = AgentSpec(
