@@ -115,7 +115,7 @@ export interface paths {
         };
         /**
          * Graph View
-         * @description Live memory graph for the UI canvas. FalkorDB stays private on the server, so this is the only way in.
+         * @description Live memory graph for the UI canvas. FalkorDB is private on the server, so this is the only way in.
          */
         get: operations["graph_view_api__tenant__graph_get"];
         put?: never;
@@ -177,6 +177,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/{tenant}/merge/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge Explain */
+        post: operations["merge_explain_api__tenant__merge_explain_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/{tenant}/arbiter/rederive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Arbiter Rederive */
+        post: operations["arbiter_rederive_api__tenant__arbiter_rederive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/{tenant}/merge/resolve": {
         parameters: {
             query?: never;
@@ -205,6 +239,47 @@ export interface paths {
         put?: never;
         /** Revert Commit */
         post: operations["revert_commit_api__tenant__revert_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/{tenant}/agents/{agent_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent Message
+         * @description One chat turn: the agent reads its branch, makes one LLM call and commits. Plain JSON for now;
+         *     SSE token streaming is issue #10. An LLM failure raises before any write and comes back as 502.
+         */
+        post: operations["agent_message_api__tenant__agents__agent_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/{tenant}/agents/{agent_id}/kill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Kill Agent
+         * @description Hand the agent's branch to its successor (agent-2, agent-3, ...). Unknown agent or branch is 404.
+         */
+        post: operations["kill_agent_api__tenant__agents__agent_id__kill_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -249,6 +324,31 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentReply */
+        AgentReply: {
+            /** Agent Id */
+            agent_id: string;
+            /** Text */
+            text: string;
+            /** Commit Id */
+            commit_id?: string | null;
+            /**
+             * Cited Fact Ids
+             * @default []
+             */
+            cited_fact_ids: string[];
+            /**
+             * Missing Keys
+             * @default []
+             */
+            missing_keys: string[];
+            usage?: components["schemas"]["Usage"] | null;
+            /**
+             * Branch
+             * @default
+             */
+            branch: string;
+        };
         /** Commit */
         Commit: {
             /** Id */
@@ -353,6 +453,13 @@ export interface components {
              */
             precedent_count: number;
         };
+        /** ConflictExplanation */
+        ConflictExplanation: {
+            /** Key */
+            key: string;
+            /** Text */
+            text: string;
+        };
         /** Derivation */
         Derivation: {
             /** Child */
@@ -451,6 +558,21 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HandoffResult */
+        HandoffResult: {
+            /** Successor */
+            successor: string;
+            /** Branch */
+            branch: string;
+            /** Inherited */
+            inherited: components["schemas"]["Fact"][];
+            /** Commits */
+            commits: number;
+            /** Commit Id */
+            commit_id: string;
+            /** Summary */
+            summary: string;
+        };
         /**
          * MergeApplied
          * @description What apply_merge did.
@@ -525,6 +647,13 @@ export interface components {
          * @enum {string}
          */
         MergeStrategy: "auto" | "latest-wins" | "needs-review";
+        /** MessageRequest */
+        MessageRequest: {
+            /** Message */
+            message: string;
+            /** Session Id */
+            session_id?: string;
+        };
         /**
          * NewFact
          * @description A fact an agent wants to add. ids are assigned client-side so DERIVED_FROM can reference them.
@@ -585,6 +714,32 @@ export interface components {
             confidence?: number | null;
             /** Agent Id */
             agent_id?: string | null;
+        };
+        /** RederiveRequest */
+        RederiveRequest: {
+            /** Target */
+            target: string;
+            /** Fact Ids */
+            fact_ids: string[];
+            /**
+             * Session Id
+             * @default arbiter
+             */
+            session_id: string;
+        };
+        /** RederiveResult */
+        RederiveResult: {
+            /** Replies */
+            replies: components["schemas"]["AgentReply"][];
+            /** Tokens */
+            tokens: number;
+            /** Owners */
+            owners: string[];
+            /**
+             * Skipped
+             * @default []
+             */
+            skipped: string[];
         };
         /** ResolveRequest */
         ResolveRequest: {
@@ -669,6 +824,31 @@ export interface components {
             tenants: number;
             /** Query Ms */
             query_ms: number;
+        };
+        /** Usage */
+        Usage: {
+            /** Model */
+            model: string;
+            /**
+             * Prompt Tokens
+             * @default 0
+             */
+            prompt_tokens: number;
+            /**
+             * Completion Tokens
+             * @default 0
+             */
+            completion_tokens: number;
+            /**
+             * Cached
+             * @default false
+             */
+            cached: boolean;
+            /**
+             * Provider
+             * @default
+             */
+            provider: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1015,6 +1195,76 @@ export interface operations {
             };
         };
     };
+    merge_explain_api__tenant__merge_explain_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictExplanation"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    arbiter_rederive_api__tenant__arbiter_rederive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RederiveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RederiveResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     merge_resolve_api__tenant__merge_resolve_post: {
         parameters: {
             query?: never;
@@ -1072,6 +1322,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RevertResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    agent_message_api__tenant__agents__agent_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReply"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    kill_agent_api__tenant__agents__agent_id__kill_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tenant: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandoffResult"];
                 };
             };
             /** @description Validation Error */

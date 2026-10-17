@@ -9,13 +9,14 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from redis.exceptions import ResponseError
 
 from git0 import __version__
 from git0.agents.arbiter import ConflictExplanation, RederiveResult, explain, rederive
-from git0.agents.base import LLMCall
+from git0.agents.base import AgentReply, LLMCall, step
 from git0.agents.handoff import HandoffResult, handoff
+from git0.agents.specs import AGENTS
 from git0.config import get_settings
 from git0.core.db import close_db, ensure_schema, get_db, tenant_graph
 from git0.core.merge import apply_merge, plan_merge
@@ -243,6 +244,24 @@ async def revert_commit(tenant: str, req: RevertRequest) -> RevertResult:
         return await revert(await repo_for(tenant), req.branch, req.commit_id, req.agent_id)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc
+
+
+class MessageRequest(BaseModel):
+    message: str = Field(min_length=1)
+    session_id: str = Field(default_factory=new_id)  # the UI keeps one per chat tab so turns group together
+
+
+@app.post("/api/{tenant}/agents/{agent_id}/messages")
+async def agent_message(
+    tenant: str, agent_id: str, req: MessageRequest, llm: Annotated[LLMCall, Depends(get_llm)]
+) -> AgentReply:
+    """One chat turn: the agent reads its branch, makes one LLM call and commits. Plain JSON for now;
+    SSE token streaming is issue #10. An LLM failure raises before any write and comes back as 502."""
+    agent = AGENTS.get(agent_id)
+    if agent is None:
+        raise HTTPException(404, f"unknown agent {agent_id!r}; one of {sorted(AGENTS)}")
+    repo = await repo_for(tenant)
+    return await step(agent, repo, req.message, req.session_id, tenant=tenant, llm=llm)
 
 
 @app.post("/api/{tenant}/agents/{agent_id}/kill")
