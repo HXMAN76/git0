@@ -76,6 +76,19 @@ async def test_seq_is_max_plus_one_with_both_parents(repo):
     assert log[0].kind == "merge"
 
 
+async def test_log_lists_parents_so_the_ui_can_draw_merges(repo):
+    await commit(repo, "main", "base")
+    await repo.create_branch("feat")
+    await commit(repo, "feat", "src")
+    await commit(repo, "main", "tgt")
+    ht, hs = await repo.head("main"), await repo.head("feat")
+    m = await merge(repo)
+    by_id = {c.id: c for c in await repo.log("main")}
+    assert sorted(by_id[m.id].parents) == sorted([ht, hs])
+    assert len(by_id[ht].parents) == 1  # a plain commit has one parent
+    assert any(c.parents == [] for c in by_id.values())  # the root from init has none
+
+
 async def test_stale_expected_target_returns_none_and_writes_nothing(repo):
     await commit(repo, "main", "base")
     await repo.create_branch("feat")

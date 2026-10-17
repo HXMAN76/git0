@@ -373,6 +373,11 @@ export interface components {
              * @default 0
              */
             removed: number;
+            /**
+             * Parents
+             * @default []
+             */
+            parents: string[];
         };
         /** CommitRequest */
         CommitRequest: {
