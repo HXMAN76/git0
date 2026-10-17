@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,7 @@ from git0.core.models import (
     Commit,
     CommitRequest,
     Fact,
+    GraphView,
     MergeApplied,
     MergeResult,
     Procedure,
@@ -116,6 +117,20 @@ async def checkout(tenant: str, name: str) -> list[Fact]:
 @app.get("/api/{tenant}/branches/{name}/log")
 async def log(tenant: str, name: str, limit: int = 50) -> list[Commit]:
     return await (await repo_for(tenant)).log(name, limit)
+
+
+@app.get("/api/{tenant}/graph")
+async def graph_view(
+    tenant: str,
+    branch: str = "main",
+    limit: int = Query(200, ge=1, le=1000),  # facts; the canvas gets sluggish past ~1000 nodes
+    episodes: bool = True,
+) -> GraphView:
+    """Live memory graph for the UI canvas. FalkorDB is private on the server, so this is the only way in."""
+    try:
+        return await (await repo_for(tenant)).graph_view(branch, limit, episodes)
+    except KeyError as exc:  # unknown branch
+        raise HTTPException(404, str(exc.args[0])) from exc
 
 
 @app.get("/api/{tenant}/scorecard")

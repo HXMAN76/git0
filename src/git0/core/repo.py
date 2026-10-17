@@ -5,7 +5,18 @@ import uuid
 
 from falkordb.asyncio.graph import AsyncGraph
 
-from git0.core.models import Commit, CommitRequest, Derivation, Fact, NewFact, Procedure, Scorecard
+from git0.core.models import (
+    Commit,
+    CommitRequest,
+    Derivation,
+    Fact,
+    GraphLink,
+    GraphNode,
+    GraphView,
+    NewFact,
+    Procedure,
+    Scorecard,
+)
 from git0.core.queries import Q
 
 
@@ -179,6 +190,43 @@ class MemoryRepo:
     async def lookup(self, branch: str, key: str) -> list[dict]:
         """Empty list means 'not in memory' (no path from HEAD), which the agents must say verbatim."""
         return _rows(await self.graph.ro_query(Q["fact_lookup"], {"branch": branch, "key": key}))
+
+    async def graph_view(self, branch: str, limit: int = 200, episodes: bool = True) -> GraphView:
+        """A branch's visible facts plus their commits, authors, episodes and DERIVED_FROM edges, for the UI.
+
+        One read (graph_view.cypher) returns a row per fact. Nodes and edges are deduped here because many
+        facts share a commit. Asks for limit + 1 rows so `truncated` is known without a second count query.
+        """
+        rows = _rows(await self.graph.ro_query(Q["graph_view"], {"branch": branch, "limit": limit + 1}))
+        if not rows:
+            await self.head(branch)  # KeyError for an unknown branch instead of a silently empty graph
+        truncated, rows = len(rows) > limit, rows[:limit]
+        nodes: dict[str, GraphNode] = {}
+        edges: dict[tuple[str, str, str], None] = {}  # ordered set: AUTHORED/FROM_EPISODE repeat per fact row
+        for r in rows:
+            fact = {k: r[k] for k in ("s", "p", "o", "key", "confidence", "agent_id")}
+            name = f"{r['s']} {r['p']}: {r['o']}"
+            nodes[r["id"]] = GraphNode(id=r["id"], label="Fact", name=name, kind=r["p"], props=fact)
+            commit = GraphNode(
+                id=r["commit_id"],
+                label="Commit",
+                name=r["commit_msg"] or r["commit_id"],
+                kind=r["commit_kind"] or "commit",
+                props={"seq": r["commit_seq"]},
+            )
+            nodes.setdefault(commit.id, commit)
+            edges[(r["id"], commit.id, "ADDED_IN")] = None
+            for agent in r["authors"]:
+                nodes.setdefault(agent, GraphNode(id=agent, label="Agent", name=agent, kind="agent"))
+                edges[(agent, commit.id, "AUTHORED")] = None
+            for ep_id, text in r["episodes"] if episodes else []:
+                nodes.setdefault(ep_id, GraphNode(id=ep_id, label="Episode", name=text, kind="episode"))
+                edges[(commit.id, ep_id, "FROM_EPISODE")] = None
+            for parent in r["parents"]:
+                edges[(r["id"], parent, "DERIVED_FROM")] = None
+        # A DERIVED_FROM parent can be hidden on this branch or past the cap: keep only edges inside the view.
+        links = [GraphLink(source=s, target=t, type=k) for s, t, k in edges if s in nodes and t in nodes]
+        return GraphView(branch=branch, nodes=list(nodes.values()), links=links, truncated=truncated)
 
     async def scorecard(self) -> Scorecard:
         """Live counters in one read query. `tenants` stays 0 here: only the API knows the other graphs."""
