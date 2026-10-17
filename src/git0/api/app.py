@@ -1,7 +1,9 @@
 """FastAPI app (Person D owns routes/UI wiring; Person A owns the repo calls behind them)."""
 
 import asyncio
-from contextlib import asynccontextmanager
+import logging
+import time
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -32,16 +34,47 @@ from git0.core.models import (
 )
 from git0.core.repo import CommitConflictError, MemoryRepo, new_id
 from git0.core.revert import revert
+from git0.core.rooms import sweep
 from git0.llm import client as llm_client
 from git0.llm.client import LLMError
 from git0.seed import seed
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
+logger = logging.getLogger(__name__)  # not `log`: that name is the log route below
+_sweep_lock = asyncio.Lock()  # one sweep at a time, so two sweeps never GRAPH.DELETE the same room
+
+
+async def sweep_rooms(*, cap_only: bool = False) -> list[tuple[str, str]]:
+    """Room cleanup (#30). The periodic sweep applies TTL + cap; before seeding a new room, cap-only with one
+    slot kept free for it, so the room count never goes over MAX_ROOMS."""
+    s = get_settings()
+    async with _sweep_lock:
+        return await sweep(
+            get_db(),
+            now_ms=int(time.time() * 1000),
+            ttl_s=None if cap_only else s.tenant_ttl_seconds,
+            max_rooms=s.max_rooms - 1 if cap_only else s.max_rooms,
+            pinned=s.pinned_tenants,
+        )
+
+
+async def _sweep_forever() -> None:
+    # Sleep first: a restart (deploy, test client) should not delete anything the moment it boots.
+    while True:
+        await asyncio.sleep(get_settings().sweep_interval_s)
+        try:
+            await sweep_rooms()
+        except Exception:  # log loudly and keep sweeping: a dead sweeper would silently fill the host
+            logger.exception("room sweep failed")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    sweeper = asyncio.create_task(_sweep_forever())
     yield
+    sweeper.cancel()
+    with suppress(asyncio.CancelledError):
+        await sweeper
     await close_db()
 
 
@@ -100,6 +133,7 @@ async def init_tenant(tenant: str) -> dict:
     repo = await repo_for(tenant)
     await repo.init()
     await ensure_schema(repo.graph)
+    await repo.touch()
     return {"tenant": tenant, "head": await repo.head("main")}
 
 
@@ -111,11 +145,14 @@ async def seed_tenant(tenant: str) -> dict:
     repo = await repo_for(tenant)
     # One seed per tenant at a time: concurrent seeds race on the same branch and commit steps.
     async with _seed_locks.setdefault(tenant, asyncio.Lock()):
+        if repo.graph.name not in await get_db().list_graphs():
+            await sweep_rooms(cap_only=True)  # a new room: evict the least recently seen ones if at the cap
         try:
             summary = await seed(repo)  # seed() creates the graph, so indexes come after it
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         await ensure_schema(repo.graph)
+        await repo.touch()  # every page load seeds, so this is the visitor's activity stamp
     return summary
 
 
@@ -123,9 +160,11 @@ async def seed_tenant(tenant: str) -> dict:
 async def create_branch(tenant: str, name: str, from_branch: str = "main") -> dict:
     repo = await repo_for(tenant)
     try:
-        return {"branch": name, "head": await repo.create_branch(name, from_branch)}
+        head = await repo.create_branch(name, from_branch)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    await repo.touch()
+    return {"branch": name, "head": head}
 
 
 @app.get("/api/{tenant}/branches/{name}/checkout")
@@ -193,21 +232,27 @@ class RevertRequest(BaseModel):
 
 @app.post("/api/{tenant}/merge/preview")
 async def merge_preview(tenant: str, req: MergeRequest) -> MergeResult:
+    repo = await repo_for(tenant)
     try:
-        return await plan_merge(await repo_for(tenant), req.source, req.target)
+        plan = await plan_merge(repo, req.source, req.target)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc
+    await repo.touch()
+    return plan
 
 
 @app.post("/api/{tenant}/merge/explain")
 async def merge_explain(
     tenant: str, req: MergeRequest, llm: Annotated[LLMCall, Depends(get_llm)]
 ) -> list[ConflictExplanation]:
+    repo = await repo_for(tenant)
     try:
-        plan = await plan_merge(await repo_for(tenant), req.source, req.target)
+        plan = await plan_merge(repo, req.source, req.target)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc
-    return await explain(plan, tenant=tenant, llm=llm)
+    explanations = await explain(plan, tenant=tenant, llm=llm)
+    await repo.touch()
+    return explanations
 
 
 @app.post("/api/{tenant}/arbiter/rederive")
@@ -220,7 +265,9 @@ async def arbiter_rederive(
     except KeyError as exc:
         raise HTTPException(400, str(exc.args[0])) from exc
     facts = await repo.facts_by_ids(req.fact_ids)
-    return await rederive(repo, facts, target=req.target, tenant=tenant, session_id=req.session_id, llm=llm)
+    result = await rederive(repo, facts, target=req.target, tenant=tenant, session_id=req.session_id, llm=llm)
+    await repo.touch()
+    return result
 
 
 @app.post("/api/{tenant}/merge/resolve")
@@ -232,31 +279,41 @@ async def merge_resolve(tenant: str, req: ResolveRequest) -> MergeApplied:
         previewed = (req.target_head or plan.target_head, req.source_head or plan.source_head)
         if previewed != (plan.target_head, plan.source_head):
             raise HTTPException(409, "branch moved since preview; preview again")
-        return await apply_merge(repo, plan, req.choices, req.agent_id)
+        applied = await apply_merge(repo, plan, req.choices, req.agent_id)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc
+    await repo.touch()
+    return applied
 
 
 @app.post("/api/{tenant}/revert")
 async def revert_commit(tenant: str, req: RevertRequest) -> RevertResult:
+    repo = await repo_for(tenant)
     try:
-        return await revert(await repo_for(tenant), req.branch, req.commit_id, req.agent_id)
+        result = await revert(repo, req.branch, req.commit_id, req.agent_id)
     except (ValueError, KeyError) as exc:  # KeyError = unknown branch from repo.head
         raise HTTPException(400, str(exc.args[0])) from exc
+    await repo.touch()
+    return result
 
 
 @app.post("/api/{tenant}/agents/{agent_id}/kill")
 async def kill_agent(tenant: str, agent_id: str) -> HandoffResult:
     """Hand the agent's branch to its successor (agent-2, agent-3, ...). Unknown agent or branch is 404."""
+    repo = await repo_for(tenant)
     try:
-        return await handoff(await repo_for(tenant), agent_id, session_id=new_id())
+        result = await handoff(repo, agent_id, session_id=new_id())
     except KeyError as exc:
         raise HTTPException(404, str(exc.args[0])) from exc
+    await repo.touch()
+    return result
 
 
 @app.post("/api/{tenant}/commits")
 async def commit(tenant: str, req: CommitRequest) -> dict:
-    c, retries = await (await repo_for(tenant)).commit(req)
+    repo = await repo_for(tenant)
+    c, retries = await repo.commit(req)
+    await repo.touch()
     return {"commit": c, "retries": retries}
 
 
