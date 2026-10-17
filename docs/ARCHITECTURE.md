@@ -49,6 +49,7 @@ Source plan: `git-for-memory-winplan.md` (2026-10-16). This file covers what we 
 (:Conflict)-[:RESOLVED_IN]->(:Commit)   // the merge commit that resolved it
 (:Conflict)-[:RESOLVED_BY]->(:Precedent {key_pattern, choice, count})
 (:Rule {p, strategy})          // deadline/owner: needs-review, preference: latest-wins
+(:Room {created_at, last_seen}) // one per graph; touched on seed + every POST; the room sweep reads it
 ```
 
 Invariants (tests enforce these; do not break them):
@@ -113,7 +114,7 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 |-|-|-|-|
 | `GET /api/health` | → `{ok, version, graphs}` | — | done |
 | `POST /api/{t}/init` | → `{tenant, head}` | A | done |
-| `POST /api/{t}/seed` | → `{created, branches, facts_on_main, facts_on_scheduler}`: launch-plan room (main, planner, scheduler) | A `seed.py` | done |
+| `POST /api/{t}/seed` | → `{created, branches, facts_on_main, facts_on_scheduler}`: launch-plan room (main, planner, scheduler). Stamps `Room.last_seen`; a new room first evicts the least recently seen if at `MAX_ROOMS`. `created: true` for a room id the browser remembered = it was swept | A `seed.py` | done |
 | `POST /api/{t}/branches/{name}` · `GET .../checkout` · `GET .../log` | `Fact[]` / `Commit[]` | A | done |
 | `POST /api/{t}/commits` | `CommitRequest` → `{commit, retries}` | A | done |
 | `GET /api/{t}/facts/{id}/why` | → why-path rows | A | done |

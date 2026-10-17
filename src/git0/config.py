@@ -8,7 +8,10 @@ class Settings(BaseSettings):
 
     falkordb_url: str = "redis://localhost:6379"
     tenant_graph_prefix: str = "team_"
-    tenant_ttl_seconds: int = 7200
+    tenant_ttl_seconds: int = 7200  # rooms idle longer than this are deleted by the sweep (#30)
+    max_rooms: int = 300  # ~1.7 MB per room: 300 rooms is ~0.6 GB of the t3.small's ~1 GB room budget
+    pinned_tenants: list[str] = ["demo"]  # never swept: the shared link for judges and the video
+    sweep_interval_s: int = 600
 
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-20b"

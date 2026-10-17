@@ -416,6 +416,19 @@ ORDER BY pr.count DESC
 LIMIT 1
 ```
 
+## `room_last_seen`
+
+When was this room last used? Read by the room sweep (#30) for every `team_*` graph.
+Rooms created before the Room node existed have none, so fall back to the earliest commit's ts (the root
+commit from `init`). Both `CALL {}`s aggregate, so an empty graph still returns one row: `last_seen` = null,
+which the sweep treats as "oldest possible".
+
+```cypher
+CALL { OPTIONAL MATCH (r:Room) RETURN max(r.last_seen) AS room_seen }
+CALL { OPTIONAL MATCH (c:Commit) RETURN min(c.ts) AS root_ts }
+RETURN coalesce(room_seen, root_ts) AS last_seen
+```
+
 ## `rules`
 
 All merge rules: predicate -> strategy. Read by the merge engine to classify a conflicting key.
@@ -487,6 +500,19 @@ UNWIND $rules AS r
 MERGE (x:Rule {p: r.p})
 ON CREATE SET x.strategy = r.strategy
 RETURN count(x) AS rules
+```
+
+## `touch_room`
+
+Stamp visitor activity on this tenant's single `(:Room)` node (#30). Runs after every seed (= every page load)
+and every POST route, so the background sweep can delete rooms idle longer than TENANT_TTL_SECONDS and evict
+the least recently seen ones when there are more than MAX_ROOMS. MERGE keeps it to one Room per graph.
+
+```cypher
+MERGE (r:Room)
+ON CREATE SET r.created_at = timestamp()
+SET r.last_seen = timestamp()
+RETURN r.last_seen AS last_seen
 ```
 
 ## `why_path`
