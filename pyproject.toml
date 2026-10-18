@@ -41,6 +41,9 @@ markers = [
     "llm: calls a real LLM API (skipped unless GROQ_API_KEY is set)",
 ]
 
+[project.scripts]
+git0-mcp = "git0.mcp.server:main"
+
 [tool.ruff]
 line-length = 110
 target-version = "py312"
