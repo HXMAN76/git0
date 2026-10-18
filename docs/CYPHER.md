@@ -192,6 +192,47 @@ RETURN ag.id AS peer, ag.label AS peer_label, peer.id AS change_id, peer.summary
        peer.kind AS change_kind, s.id AS symbol
 ```
 
+## `code_record_conflicts`
+
+Writes the conflicts a blocked edit raised as Conflict nodes, in one query, so the graph shows the story:
+(Agent)-[:RAISED]->(Conflict)-[:ON]->(Symbol the checking agent touched) and, when a peer Change is involved,
+(Conflict)-[:AGAINST]->(Change). Every Conflict starts with resolution 'pending'; code_resolve_conflicts sets it.
+Why unit CALL blocks: each step needs the UNWIND rows and must not stop the others. An intent conflict has no
+peer Change, so its change_id is '' and the AGAINST step simply matches nothing for it.
+Why the ids come from the caller: the harness puts them in the `conflict` SSE event, so the UI can link the card.
+Why the final MATCH: it confirms each Conflict exists before the caller treats the ids as recorded.
+
+```cypher
+MERGE (me:Agent {id: $agent})
+WITH me
+CALL {
+  WITH me
+  UNWIND $conflicts AS c
+  CREATE (x:Conflict {id: c.id, agent: $agent, peer: c.peer, kind: c.kind, message: c.message, ts: c.ts,
+                      resolution: 'pending'})
+  CREATE (me)-[:RAISED]->(x)
+}
+CALL {
+  WITH me
+  UNWIND $conflicts AS c
+  MATCH (x:Conflict {id: c.id})
+  MATCH (s:Symbol {id: c.symbol})
+  MERGE (x)-[:ON]->(s)
+}
+CALL {
+  WITH me
+  UNWIND $conflicts AS c
+  MATCH (x:Conflict {id: c.id})
+  MATCH (ch:Change)
+  WHERE ch.id = c.change_id
+  MERGE (x)-[:AGAINST]->(ch)
+}
+WITH me
+UNWIND $conflicts AS c
+MATCH (x:Conflict {id: c.id})
+RETURN x.id AS id
+```
+
 ## `code_record_edit`
 
 Records one file write in one query: upserts the file's symbols, marks symbols that vanished as removed,
@@ -258,6 +299,19 @@ CALL {
   CREATE (c)-[:TOUCHED]->(s)
 }
 RETURN f.path AS path
+```
+
+## `code_resolve_conflicts`
+
+The human's choice on a blocked write: sets resolution on each Conflict (pending -> adopt | override | pause).
+Why MATCH and not MERGE: a Conflict is created when the write is blocked, so an unknown id must not invent one.
+Why count(x): the caller gets back how many Conflicts matched, so a stale id is visible instead of silent.
+
+```cypher
+UNWIND $ids AS cid
+MATCH (x:Conflict {id: cid})
+SET x.resolution = $resolution
+RETURN count(x) AS n
 ```
 
 ## `code_seed`
@@ -327,27 +381,31 @@ ORDER BY ts
 
 ## `code_view_links`
 
-Every edge the IDE's graph panel draws: DEFINES, CALLS, MADE, TOUCHED, INTENDS, TARGETS, ACKED.
+Every edge the IDE's graph panel draws: DEFINES, CALLS, MADE, TOUCHED, INTENDS, TARGETS, ACKED, and the
+conflict story RAISED (agent -> Conflict), ON (Conflict -> Symbol), AGAINST (Conflict -> peer Change).
 Endpoints are returned as the same ids code_view_nodes uses (coalesce(id, path)), so the UI can join them.
 
 ```cypher
 MATCH (a)-[r]->(b)
-WHERE type(r) IN ['DEFINES', 'CALLS', 'MADE', 'TOUCHED', 'INTENDS', 'TARGETS', 'ACKED']
+WHERE type(r) IN ['DEFINES', 'CALLS', 'MADE', 'TOUCHED', 'INTENDS', 'TARGETS', 'ACKED',
+                  'RAISED', 'ON', 'AGAINST']
 RETURN coalesce(a.id, a.path) AS source, coalesce(b.id, b.path) AS target, type(r) AS type
 ```
 
 ## `code_view_nodes`
 
-Every File, Symbol, Change, Agent and Intent node for the IDE's graph panel, one row each.
+Every File, Symbol, Change, Agent, Intent and Conflict node for the IDE's graph panel, one row each.
 Why coalesce(id, path): File nodes are keyed by path; every other label has an id. The UI wants one id field.
-Only the properties the panel shows are returned, so the response stays small.
+Only the properties the panel shows are returned, so the response stays small. ts is returned for Change,
+Intent and Conflict so the panel can draw a timeline.
 
 ```cypher
 MATCH (n)
-WHERE n:File OR n:Symbol OR n:Change OR n:Agent OR n:Intent
+WHERE n:File OR n:Symbol OR n:Change OR n:Agent OR n:Intent OR n:Conflict
 RETURN labels(n)[0] AS label, coalesce(n.id, n.path) AS id, n.name AS name, n.path AS path,
        n.kind AS kind, n.signature AS signature, n.summary AS summary, n.task AS task,
-       n.label AS agent_label, n.agent AS agent, n.active AS active, n.removed AS removed
+       n.label AS agent_label, n.agent AS agent, n.active AS active, n.removed AS removed,
+       n.ts AS ts, n.peer AS peer, n.message AS message, n.resolution AS resolution
 ```
 
 ## `commit_ancestors`

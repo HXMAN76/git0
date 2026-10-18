@@ -53,3 +53,110 @@ aside ::-webkit-scrollbar-track,
 section ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ---------- driver.js tour and coach marks, themed as a VS Code notification card ---------- */
+
+.git0-popover.driver-popover {
+  background-color: #252526;
+  color: #cccccc;
+  border: 1px solid #454545;
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  font-family: 'Segoe UI', 'Segoe WPC', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  min-width: 260px;
+  max-width: 340px;
+  padding: 14px 16px 12px;
+}
+
+.git0-popover .driver-popover-title {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  padding-right: 28px;
+}
+
+.git0-popover .driver-popover-description {
+  color: #cccccc;
+  font-size: 13px;
+}
+
+.git0-popover .driver-popover-progress-text {
+  color: #8b8b8b;
+  font-size: 11px;
+}
+
+.git0-popover .driver-popover-footer {
+  align-items: center;
+  margin-top: 12px;
+}
+
+.git0-popover .driver-popover-footer button {
+  background-color: #0e639c;
+  color: #ffffff;
+  border: 0;
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  text-shadow: none;
+}
+
+.git0-popover .driver-popover-footer button:hover,
+.git0-popover .driver-popover-footer button:focus-visible {
+  background-color: #1177bb;
+  outline: 1px solid #007acc;
+  outline-offset: 1px;
+}
+
+.git0-popover .driver-popover-footer .driver-popover-prev-btn {
+  background-color: #3a3d41;
+}
+
+.git0-popover .driver-popover-footer .driver-popover-prev-btn:hover {
+  background-color: #45494e;
+}
+
+.git0-popover .driver-popover-footer button.driver-popover-btn-disabled {
+  opacity: 0.4;
+}
+
+.git0-popover .driver-popover-close-btn {
+  color: #9d9d9d;
+  font-size: 12px;
+  top: 8px;
+  right: 10px;
+  width: auto;
+  height: auto;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+}
+
+.git0-popover .driver-popover-close-btn:hover,
+.git0-popover .driver-popover-close-btn:focus-visible {
+  color: #ffffff;
+  background: transparent;
+}
+
+/* driver.js arrow: colour only the visible side so the arrow matches the card. */
+.git0-popover .driver-popover-arrow-side-left {
+  border-left-color: #252526;
+}
+.git0-popover .driver-popover-arrow-side-right {
+  border-right-color: #252526;
+}
+.git0-popover .driver-popover-arrow-side-top {
+  border-top-color: #252526;
+}
+.git0-popover .driver-popover-arrow-side-bottom {
+  border-bottom-color: #252526;
+}
+
+/* Coach marks must not trap the page: while one is on screen, the app stays clickable (driver.js normally
+   disables pointer events on everything outside the highlighted element). */
+body.git0-coach-live #root * {
+  pointer-events: auto !important;
+}

@@ -19,7 +19,7 @@ from mcp.server.mcpserver import MCPServer as FastMCP
 
 from git0.agents.base import step
 from git0.agents.specs import AGENTS
-from git0.code.relay import CodeRelay, code_graph_for
+from git0.code.relay import CodeRelay, ConflictInfo, code_graph_for
 from git0.config import get_settings
 from git0.core.db import ensure_schema, get_db, tenant_graph
 from git0.core.merge import apply_merge, plan_merge
@@ -405,6 +405,25 @@ async def code_acknowledge(tenant: str, agent: str, change_ids: list[str]) -> di
 
 
 @mcp.tool()
+async def code_record_conflicts(tenant: str, agent: str, conflicts: list[ConflictInfo]) -> dict:
+    """
+    Add the conflicts a blocked write raised to the graph as Conflict nodes (resolution "pending"), linked to
+    the checking agent, the symbol it touched, and the peer Change it clashes with. Call it once per block.
+    Returns {conflict_ids}. Then call code_resolve_conflicts with the human's choice.
+    """
+    return {"conflict_ids": await _relay(tenant).record_conflicts(agent, conflicts)}
+
+
+@mcp.tool()
+async def code_resolve_conflicts(tenant: str, conflict_ids: list[str], resolution: str) -> dict:
+    """
+    Record the human's choice on recorded conflicts. resolution is one of: adopt | override | pause.
+    Returns {resolved: <number of Conflict nodes that matched>}.
+    """
+    return {"resolved": await _relay(tenant).resolve_conflicts(conflict_ids, resolution)}
+
+
+@mcp.tool()
 async def code_graph(tenant: str) -> dict:
     """The session's code graph: {nodes: [{id, label, name, kind, props}], links: [...]}."""
     return await _relay(tenant).view()
@@ -428,7 +447,6 @@ def main() -> None:
             port = int(sys.argv[sys.argv.index("--port") + 1])
         mcp.run(transport="sse", port=port)
     elif "--http" in sys.argv:
-        import asyncio
         import uvicorn
         from starlette.middleware.cors import CORSMiddleware
 

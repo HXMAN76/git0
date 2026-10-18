@@ -15,7 +15,10 @@ interface ExplorerProps {
 
 export function Explorer({ state, onOpen }: ExplorerProps) {
   return (
-    <aside className="flex w-full shrink-0 flex-col overflow-hidden border-b border-[#2b2b2b] bg-[#252526] text-[13px] text-[#cccccc] lg:w-[190px] lg:border-b-0 lg:border-r">
+    <aside
+      data-tour="explorer"
+      className="flex w-full shrink-0 flex-col overflow-hidden border-b border-[#2b2b2b] bg-[#252526] text-[13px] text-[#cccccc] lg:w-[190px] lg:border-b-0 lg:border-r"
+    >
       <div className="flex h-[35px] shrink-0 items-center px-5 text-[11px] uppercase tracking-wide text-[#bbbbbb]">Explorer</div>
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
         {(['A', 'B'] as AgentId[]).map((agent) => (
@@ -111,7 +114,10 @@ interface EditorAreaProps {
 
 export function EditorArea({ state, onSelect, onClose }: EditorAreaProps) {
   return (
-    <div className="flex min-h-[260px] min-w-0 flex-1 flex-col divide-y divide-[#2b2b2b] bg-[#1e1e1e] lg:min-h-0 lg:flex-row lg:divide-x lg:divide-y-0">
+    <div
+      data-tour="editors"
+      className="flex min-h-[260px] min-w-0 flex-1 flex-col divide-y divide-[#2b2b2b] bg-[#1e1e1e] lg:min-h-0 lg:flex-row lg:divide-x lg:divide-y-0"
+    >
       {(['A', 'B'] as AgentId[]).map((agent) => (
         <EditorGroup key={agent} agent={agent} state={state} onSelect={onSelect} onClose={onClose} />
       ))}

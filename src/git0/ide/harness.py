@@ -16,10 +16,14 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.models import Model
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from git0.config import get_settings
@@ -40,6 +44,8 @@ on {label}'s laptop. Make the smallest change that does what the user asks.
 - Repo paths are relative with forward slashes, for example shop/cart.py.
 - Always read_file a file before you edit it.
 - write_file takes the FULL new content of the file plus a one-line summary.
+- If you change a function's parameters, update every caller of it in your clone in the same task
+  (search with read_file).
 - If a tool result says a write was BLOCKED, follow the user's decision written in that result. Do not retry
   the same write unchanged.
 - When you are done, reply in at most two sentences saying what you changed."""
@@ -93,6 +99,127 @@ def _model_for(name: str) -> Model:
     return GoogleModel(name, provider=GoogleProvider(api_key=key))
 
 
+# ---- rate limits (Gemini free tier: 15 requests/min PER MODEL) ----
+
+RATE_LIMIT_MESSAGE = "Gemini free-tier rate limit hit. Wait a minute and send the task again."
+RETRY_DELAY_DEFAULT_S = 20.0  # used when the 429 body has no RetryInfo.retryDelay
+
+
+def _move_to_next_model(exc: Exception) -> bool:
+    """FallbackModel tries the next model only on quota (429) or overload (503). Other errors fail at once."""
+    return isinstance(exc, ModelHTTPError) and exc.status_code in (429, 503)
+
+
+def _leaves(exc: BaseException) -> list[BaseException]:
+    """The real errors under a FallbackExceptionGroup (FallbackModel nests every model's error in one)."""
+    if isinstance(exc, ExceptionGroup):
+        return [leaf for sub in exc.exceptions for leaf in _leaves(sub)]
+    return [exc]
+
+
+def _all_rate_limited(exc: BaseException) -> ModelHTTPError | None:
+    """The first 429 when every model in the chain answered 429 (and nothing else), else None."""
+    http = [e for e in _leaves(exc) if isinstance(e, ModelHTTPError)]
+    if http and len(http) == len(_leaves(exc)) and all(e.status_code == 429 for e in http):
+        return http[0]
+    return None
+
+
+def _find_key(node: object, key: str) -> object | None:
+    """First value stored under `key` anywhere in a nested dict/list (the JSON error body)."""
+    if isinstance(node, dict):
+        if key in node:
+            return node[key]
+        children: list[object] = list(node.values())
+    elif isinstance(node, list):
+        children = list(node)
+    else:
+        return None
+    for child in children:
+        found = _find_key(child, key)
+        if found is not None:
+            return found
+    return None
+
+
+def _retry_delay(exc: ModelHTTPError) -> float:
+    """Seconds Gemini asks us to wait: the RetryInfo `retryDelay` (a string like "25s") in the error body."""
+    delay = _find_key(exc.body, "retryDelay")
+    if isinstance(delay, str):
+        m = re.match(r"\s*(\d+(?:\.\d+)?)s", delay)
+        if m:
+            return float(m.group(1))
+    return RETRY_DELAY_DEFAULT_S
+
+
+async def _pause(seconds: float) -> None:
+    """Sleep between rate-limit retries. A module function so tests can replace it, not asyncio."""
+    await asyncio.sleep(seconds)
+
+
+class RateLimitedModel(WrapperModel):
+    """Waits out the per-minute quota when the whole chain is rate limited, then retries the request.
+
+    FallbackModel already moves to the next model at once, so this only pauses when every model said 429.
+    It retries the model request, not the turn: tool calls already made stay in the message history.
+    """
+
+    def __init__(
+        self,
+        wrapped: Model,
+        *,
+        max_wait_s: float,
+        retries: int,
+        on_wait: Callable[[float, str], None],
+        on_resume: Callable[[], None],
+    ) -> None:
+        super().__init__(wrapped)
+        self.max_wait_s = max_wait_s
+        self.retries = retries
+        self.on_wait = on_wait
+        self.on_resume = on_resume
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        attempt = 0
+        while True:
+            try:
+                return await self.wrapped.request(messages, model_settings, model_request_parameters)
+            except Exception as exc:
+                limited = _all_rate_limited(exc)
+                if limited is None or attempt >= self.retries:
+                    raise  # not a quota problem, or retries used up: the turn fails with the friendly message
+                attempt += 1
+                delay = min(_retry_delay(limited), self.max_wait_s)
+                self.on_wait(delay, limited.model_name)
+                await _pause(delay)
+                self.on_resume()
+
+
+def friendly_error(exc: BaseException) -> str:
+    """What the chat shows for a failed turn. The raw provider error is logged server-side, not shown."""
+    leaves = _leaves(exc)
+    if any(isinstance(e, ModelHTTPError) and e.status_code == 429 for e in leaves):
+        return RATE_LIMIT_MESSAGE
+    http = [e for e in leaves if isinstance(e, ModelHTTPError)]
+    if http:
+        return f"Gemini error {http[0].status_code}: {_provider_message(http[0])[:200]}"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _provider_message(exc: ModelHTTPError) -> str:
+    """The `message` field of a Gemini error body ({"error": {"message": ...}}), not the whole JSON."""
+    body = exc.body
+    inner = body.get("error", body) if isinstance(body, dict) else None
+    if isinstance(inner, dict) and isinstance(inner.get("message"), str):
+        return inner["message"]
+    return str(body) if body is not None else str(exc)
+
+
 class CodingAgent:
     def __init__(
         self,
@@ -110,15 +237,28 @@ class CodingAgent:
         self.workspace = workspace
         self.session = session
         self.hooks = hooks
-        self.model_name = s.ide_model
+        self.model_name = s.ide_model_b if agent_id == "B" else s.ide_model  # the primary; reported to the UI
         self.max_turns = s.ide_max_turns_per_agent
         self.turns_used = 0
         self._history: list[Any] = []
         self._task: asyncio.Task[None] | None = None
         self._last_error = ""
         make = model_factory or _model_for
-        self._primary: Agent[None, str] = self._build(make(s.ide_model))
-        self._fallback: Agent[None, str] = self._build(make(s.ide_fallback_model))
+        # One chain per agent: the primary first, then the rest of the pool. Each model has its own quota,
+        # so a busy turn spreads over them. Only 429/503 move to the next model; finished tool calls are kept.
+        others = [m for m in s.ide_model_pool if m != self.model_name]
+        chain = FallbackModel(
+            make(self.model_name), *(make(m) for m in others), fallback_on=_move_to_next_model
+        )
+        self._agent: Agent[None, str] = self._build(
+            RateLimitedModel(
+                chain,
+                max_wait_s=s.ide_rate_limit_max_wait_s,
+                retries=s.ide_rate_limit_retries,
+                on_wait=self._on_rate_wait,
+                on_resume=self._on_rate_resume,
+            )
+        )
 
     # ---- tools: plain async methods so pydantic-ai reads their signatures and docstrings ----
 
@@ -210,7 +350,9 @@ class CodingAgent:
         s = self.session
         peer = sorted({c["peer"] for c in decision.conflicts})[0]
         peer_label = s.agents[peer].label if peer in s.agents else peer
-        s.emit("conflict", agent=self.agent_id, conflicts=decision.conflicts)
+        # Recorded first so the event can carry the Conflict node ids (the UI links the card to the graph).
+        conflict_ids = await self._record_conflicts(decision.conflicts)
+        s.emit("conflict", agent=self.agent_id, conflicts=decision.conflicts, conflict_ids=conflict_ids)
         options = [
             {
                 "id": "adopt",
@@ -229,6 +371,7 @@ class CodingAgent:
             },
         ]
         choice = await s.ask(self.agent_id, decision.message, options)
+        await self._resolve_conflicts(conflict_ids, choice)
 
         if choice == "adopt":
             out = await self._adopt(peer, decision.conflicts)
@@ -245,6 +388,29 @@ class CodingAgent:
             text = "Written (user override)" + (f"\n\n[git0 relay] {warning}" if warning else "")
             return self._finish(call_id, name, True, text)
         return self._finish(call_id, name, False, "BLOCKED. User paused you. Stop and summarise.")
+
+    async def _record_conflicts(self, conflicts: list[dict[str, Any]]) -> list[str]:
+        """Write the blocked conflicts into the graph. A failure is an error event; the human still gets the
+        question, and the graph simply lacks this conflict node."""
+        try:
+            ids = await self.hooks.record_conflicts(conflicts)
+        except Exception as exc:
+            logger.exception("IDE could not record conflicts for agent %s", self.agent_id)
+            self.session.emit("error", agent=self.agent_id, message=f"could not record the conflict: {exc}")
+            return []
+        self.session.emit("graph_changed")
+        return ids
+
+    async def _resolve_conflicts(self, conflict_ids: list[str], choice: str) -> None:
+        if not conflict_ids:
+            return
+        try:
+            await self.hooks.resolve_conflicts(conflict_ids, choice)
+        except Exception as exc:
+            logger.exception("IDE could not resolve conflicts for agent %s", self.agent_id)
+            self.session.emit("error", agent=self.agent_id, message=f"could not store the choice: {exc}")
+            return
+        self.session.emit("graph_changed")
 
     async def _adopt(self, peer: str, conflicts: list[dict[str, Any]]) -> str:
         """Simulated `git pull`: copy the peer's version of every file it changed that this agent has not
@@ -331,13 +497,31 @@ class CodingAgent:
         if self.busy:
             self._task.cancel()  # type: ignore[union-attr]
 
+    def _on_rate_wait(self, seconds: float, model_name: str) -> None:
+        logger.warning(
+            "IDE agent %s: %s rate limited (429), waiting %.0f s", self.agent_id, model_name, seconds
+        )
+        self.session.emit(
+            "agent_status",
+            agent=self.agent_id,
+            status="rate_limited",
+            detail=(
+                "Gemini free tier limit (15 requests/min per model) reached "
+                f"— waiting {seconds:.0f} s, then continuing."
+            ),
+        )
+
+    def _on_rate_resume(self) -> None:
+        self.session.emit("agent_status", agent=self.agent_id, status="thinking")
+
     async def _turn(self, text: str) -> None:
         s = self.session
         s.emit("agent_message", agent=self.agent_id, role="user", text=text)
         s.emit("agent_status", agent=self.agent_id, status="thinking")
         try:
             await self.hooks.announce_intent(text)
-            result = await self._run_with_fallback(text)
+            limits = UsageLimits(request_limit=REQUEST_LIMIT_PER_TURN)
+            result = await self._agent.run(text, message_history=self._history, usage_limits=limits)
             self._history = list(result.all_messages())
             s.emit("agent_message", agent=self.agent_id, role="assistant", text=str(result.output))
             usage = result.usage
@@ -352,17 +536,8 @@ class CodingAgent:
         except asyncio.CancelledError:
             raise  # session ended or the process is shutting down
         except Exception as exc:  # loud: the UI shows the error; never a canned reply
-            logger.exception("IDE agent %s turn failed", self.agent_id)
-            s.emit("error", agent=self.agent_id, message=f"{type(exc).__name__}: {exc}")
+            logger.exception(
+                "IDE agent %s turn failed", self.agent_id
+            )  # the raw error stays in the server log
+            s.emit("error", agent=self.agent_id, message=friendly_error(exc))
             s.emit("agent_status", agent=self.agent_id, status="error")
-
-    async def _run_with_fallback(self, text: str) -> Any:
-        limits = UsageLimits(request_limit=REQUEST_LIMIT_PER_TURN)
-        try:
-            return await self._primary.run(text, message_history=self._history, usage_limits=limits)
-        except UsageLimitExceeded:
-            raise  # the fallback model would hit the same per-turn budget
-        except Exception as exc:
-            fallback = get_settings().ide_fallback_model
-            logger.warning("IDE model %s failed (%s); retrying once on %s", self.model_name, exc, fallback)
-            return await self._fallback.run(text, message_history=self._history, usage_limits=limits)

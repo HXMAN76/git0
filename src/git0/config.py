@@ -40,8 +40,18 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
 
     # --- Relay IDE demo (git0/ide). Each visitor session gets its own graph ide_<sid> and workspaces. ---
+    # Gemini free tier allows 15 requests/min PER MODEL, so each agent gets its own primary and the chain
+    # spreads a busy turn over the pool. Agent A uses ide_model, agent B uses ide_model_b.
     ide_model: str = "gemini-3.1-flash-lite"
-    ide_fallback_model: str = "gemini-3.5-flash-lite"  # tried once when the primary model errors
+    ide_model_b: str = "gemini-3.5-flash-lite"
+    ide_model_pool: list[str] = [
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3.5-flash",
+    ]
+    ide_rate_limit_max_wait_s: float = 40  # longest pause for a 429 (the API's retryDelay is capped to this)
+    ide_rate_limit_retries: int = 4  # retries after a 429 once every model in the chain is rate limited
     ide_max_sessions: int = 8  # live demo sessions; more gets 503 "Demo is busy"
     ide_session_ttl_s: int = 900  # idle sessions (no API calls) are ended after this
     ide_disconnect_grace_s: int = 120  # ended when no SSE subscriber has been attached for this long

@@ -1,13 +1,13 @@
 // HTTP + SSE transport for /api/ide. The mock backend is loaded only when the URL has ?mock=1,
 // so the production path is one switch plus a dynamic import that never runs in production.
 
+import { normalizeMergeResult } from './lib'
 import {
   IDE_EVENT_TYPES,
   type AgentId,
   type GraphView,
   type IdeEvent,
   type IdeTransport,
-  type MergeResult,
   type SessionCreated,
   type StreamHandlers,
 } from './types'
@@ -58,7 +58,8 @@ export const realTransport: IdeTransport = {
   answer: async (sid: string, questionId: string, choice: string) => {
     await request<{ ok: boolean }>('POST', `${sessionUrl(sid)}/questions/${encodeURIComponent(questionId)}/answer`, { choice })
   },
-  mergeCheck: (sid: string) => request<MergeResult>('POST', `${sessionUrl(sid)}/merge-check`),
+  // Old and new response shapes both normalise to MergeResult (see normalizeMergeResult).
+  mergeCheck: async (sid: string) => normalizeMergeResult(await request<unknown>('POST', `${sessionUrl(sid)}/merge-check`)),
   end: async (sid: string) => {
     await request<{ ok: boolean }>('POST', `${sessionUrl(sid)}/end`, {})
   },

@@ -68,16 +68,65 @@ def parse_file(path: str, source: str, known: dict[str, str] | None = None) -> l
     return out
 
 
-def parse_project(files: dict[str, str]) -> dict[str, list[SymbolInfo]]:
-    """Parse every *.py in `files` ({path: source}). Two passes so calls resolve across files."""
-    py = {_norm(p): src for p, src in files.items() if _norm(p).endswith(".py")}
+def project_index(files: dict[str, str]) -> dict[str, str]:
+    """Dotted names and ids of every project def -> symbol id (the `known` argument of parse_file)."""
     known: dict[str, str] = {}
-    for path, src in py.items():
+    for raw, src in files.items():
+        path = _norm(raw)
+        if not path.endswith(".py"):
+            continue
         for _, qual, _, _ in _walk_defs(ast.parse(src).body, "", False):
             ident = f"{path}::{qual}"
             known[ident] = ident
             known[f"{_dotted(path)}.{qual}"] = ident
+    return known
+
+
+def parse_project(files: dict[str, str]) -> dict[str, list[SymbolInfo]]:
+    """Parse every *.py in `files` ({path: source}). Two passes so calls resolve across files."""
+    py = {_norm(p): src for p, src in files.items() if _norm(p).endswith(".py")}
+    known = project_index(py)
     return {path: parse_file(path, src, known) for path, src in py.items()}
+
+
+@dataclass(frozen=True)
+class CallSite:
+    caller: str  # symbol id whose body holds the call
+    callee: str  # project symbol id the call resolves to
+    call: ast.Call  # the AST node, so the caller can check its arguments
+
+
+def call_sites(path: str, source: str, known: dict[str, str]) -> list[CallSite]:
+    """Every call in one file that resolves to a project symbol, with its AST node.
+
+    Why a separate function from parse_file: SymbolInfo.calls keeps only target ids, but the merge check needs
+    the arguments to compare them with the callee's parameters. Raises SyntaxError like parse_file.
+    """
+    path = _norm(path)
+    tree = ast.parse(source, filename=path)
+    local = {qual for _, qual, _, _ in _walk_defs(tree.body, "", False)}
+    aliases = _import_aliases(tree, path)
+    ids = set(known.values())
+    out: list[CallSite] = []
+    for node, qual, _kind, owner in _walk_defs(tree.body, "", False):
+        caller = f"{path}::{qual}"
+        for call in _calls_in(node):
+            target = _resolve_call(call.func, path, owner, local, aliases, known, ids)
+            if target:
+                out.append(CallSite(caller, target, call))
+    return out
+
+
+def definitions(path: str, source: str) -> dict[str, tuple[ast.FunctionDef | ast.AsyncFunctionDef, bool]]:
+    """Function and method nodes of one file: symbol id -> (node, is_method). Classes are left out, since a
+    class call goes through __init__, which the merge check does not model."""
+    path = _norm(path)
+    tree = ast.parse(source, filename=path)
+    return {
+        f"{path}::{qual}": (node, kind == "method")
+        for node, qual, kind, _owner in _walk_defs(tree.body, "", False)
+        if kind != "class"
+    }
 
 
 @dataclass(frozen=True)

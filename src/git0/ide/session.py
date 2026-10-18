@@ -233,8 +233,13 @@ class SessionManager:
         return session
 
     def agent_info(self) -> dict[str, dict[str, str]]:
-        model = get_settings().ide_model
-        return {aid: {"label": label, "model": model} for aid, label in AGENT_LABELS.items()}
+        s = get_settings()
+        # A and B start on different models: free-tier Gemini quotas are per model, so this doubles headroom.
+        models = {"A": s.ide_model, "B": s.ide_model_b}
+        return {
+            aid: {"label": label, "model": models.get(aid, s.ide_model)}
+            for aid, label in AGENT_LABELS.items()
+        }
 
     async def end(self, sid: str, reason: str = "ended") -> None:
         session = self._sessions.pop(sid, None)

@@ -1,18 +1,20 @@
 // In-browser fake backend for ?mock=1. It emits the same SSE event shapes through the same reducer, so the
 // UI can be developed and demoed without the FastAPI server. It plays one scripted story:
 //   A "Regional tax": reads pricing.py, writes it (allowed), then writes cart.py (allowed).
-//   B "Free shipping": reads cart.py (gets A's heads-up), then its write is DENIED with two conflicts,
-//   the human gets an ask_user card, and the chosen option plays out.
+//   B "Free shipping": announces an intent, reads cart.py (gets A's heads-up), then its write is DENIED with
+//   two conflicts, the human gets an ask_user card, and the chosen option plays out. The graph gets Change,
+//   Intent and Conflict nodes (RAISED / ON / AGAINST), and the Conflict's resolution follows the answer.
+//   The merge check verdict follows the answer too: override = semantic conflict, adopt = safe.
 // Nothing here is shown in the real (non-mock) path.
 
 import { ApiError } from './api'
 import {
-  AGENTS,
   type AgentId,
   type ConflictInfo,
   type GraphView,
   type IdeEvent,
   type IdeTransport,
+  type MergeFile,
   type MergeResult,
   type Preset,
   type SessionCreated,
@@ -64,8 +66,12 @@ const A_PRICING =
   'TAX_RATES = {"US": 0.08, "EU": 0.20, "IN": 0.18}\n\n\ndef apply_tax(amount, region):\n    return round(amount * (1 + TAX_RATES[region]), 2)\n\n\ndef apply_discount(amount, pct):\n    return round(amount * (1 - pct / 100), 2)\n'
 const A_CART =
   'from shop.pricing import apply_discount, apply_tax\n\n\ndef subtotal(items):\n    return round(sum(item["price"] * item["qty"] for item in items), 2)\n\n\ndef calculate_total(items, discount_pct=0, region="US"):\n    total = subtotal(items)\n    total = apply_discount(total, discount_pct)\n    return apply_tax(total, region)\n'
+/** Bob's cart after he pulled Alice's change: region-aware, shipping added on top. */
 const B_CART =
   'from shop.pricing import apply_discount, apply_tax\n\n\ndef subtotal(items):\n    return round(sum(item["price"] * item["qty"] for item in items), 2)\n\n\ndef calculate_total(items, discount_pct=0, region="US"):\n    total = subtotal(items)\n    total = apply_discount(total, discount_pct)\n    total = apply_tax(total, region)\n    if total < 50:\n        total += 5  # flat shipping under $50\n    return round(total, 2)\n'
+/** Bob's cart if he keeps his own version: it still calls apply_tax with one argument. That is the bug. */
+const B_CART_OVERRIDE =
+  'from shop.pricing import apply_discount, apply_tax\n\n\ndef subtotal(items):\n    return round(sum(item["price"] * item["qty"] for item in items), 2)\n\n\ndef calculate_total(items, discount_pct=0):\n    total = subtotal(items)\n    total = apply_discount(total, discount_pct)\n    if total < 50:\n        total += 5  # flat shipping under $50\n    return apply_tax(total)\n'
 
 const CONFLICTS: ConflictInfo[] = [
   {
@@ -93,15 +99,66 @@ const CONFLICTS: ConflictInfo[] = [
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 const newId = () => Math.random().toString(16).slice(2, 14)
 
+interface SymbolChange {
+  symbol: string
+  kind: 'modified' | 'signature'
+  /** The symbol's new signature, when the contract changed. */
+  newSignature?: string
+}
+
+/** The shop's code graph before any agent acts. Symbols, who calls whom, and the agents. */
+function buildGraph(): GraphView {
+  const symbols: { id: string; signature: string }[] = [
+    { id: 'shop/pricing.py::apply_tax', signature: 'apply_tax(amount)' },
+    { id: 'shop/pricing.py::apply_discount', signature: 'apply_discount(amount, pct)' },
+    { id: 'shop/cart.py::subtotal', signature: 'subtotal(items)' },
+    { id: 'shop/cart.py::calculate_total', signature: 'calculate_total(items, discount_pct=0)' },
+    { id: 'shop/receipts.py::format_receipt', signature: 'format_receipt(items, total)' },
+    { id: 'shop/checkout.py::checkout', signature: 'checkout(items, user)' },
+  ]
+  const nodes: GraphView['nodes'] = [
+    ...['shop/pricing.py', 'shop/cart.py', 'shop/receipts.py', 'shop/checkout.py'].map((p) => ({
+      id: p,
+      label: 'File',
+      name: p,
+      kind: 'file',
+      props: {},
+    })),
+    ...symbols.map((s) => ({
+      id: s.id,
+      label: 'Symbol',
+      name: s.id.split('::')[1],
+      kind: 'function',
+      props: { path: s.id.split('::')[0], signature: s.signature },
+    })),
+    { id: 'A', label: 'Agent', name: 'Alice', kind: 'agent', props: { label: 'Alice' } },
+    { id: 'B', label: 'Agent', name: 'Bob', kind: 'agent', props: { label: 'Bob' } },
+  ]
+  const defines = symbols.map((s) => ({ source: s.id.split('::')[0], target: s.id, type: 'DEFINES' }))
+  const calls = [
+    { source: 'shop/cart.py::calculate_total', target: 'shop/cart.py::subtotal', type: 'CALLS' },
+    { source: 'shop/cart.py::calculate_total', target: 'shop/pricing.py::apply_discount', type: 'CALLS' },
+    { source: 'shop/cart.py::calculate_total', target: 'shop/pricing.py::apply_tax', type: 'CALLS' },
+    { source: 'shop/checkout.py::checkout', target: 'shop/cart.py::calculate_total', type: 'CALLS' },
+    { source: 'shop/checkout.py::checkout', target: 'shop/receipts.py::format_receipt', type: 'CALLS' },
+  ]
+  return { nodes, links: [...defines, ...calls] }
+}
+
 export function createMockTransport(): IdeTransport {
   let sid = ''
   let ended = false
-  const files: Record<AgentId, FileMap> = { A: { ...TEMPLATE }, B: { ...TEMPLATE } }
-  const busy: Record<AgentId, boolean> = { A: false, B: false }
-  const buffer: IdeEvent[] = []
+  let files: Record<AgentId, FileMap> = { A: { ...TEMPLATE }, B: { ...TEMPLATE } }
+  let busy: Record<AgentId, boolean> = { A: false, B: false }
+  let buffer: IdeEvent[] = []
   const listeners = new Set<StreamHandlers>()
   const pendingAnswers = new Map<string, (choice: string) => void>()
-  const graph: GraphView = buildGraph()
+  let graph: GraphView = buildGraph()
+  /** Latest Change node per file, so a Conflict can point AGAINST it. */
+  let lastChange: Record<string, string> = {}
+  /** The conflict nodes of Bob's denied write, and the option he ended up with. */
+  let conflictIds: string[] = []
+  let bChoice: string | null = null
 
   function emit(payload: Payload) {
     if (ended) return
@@ -122,7 +179,14 @@ export function createMockTransport(): IdeTransport {
     emit({ type: 'tool_result', agent, call_id: callId, tool, ok, summary })
   }
 
-  function writeFile(agent: AgentId, path: string, content: string, summary: string, check: { decision: 'allow' | 'deny'; detail: string; ms: number }) {
+  function writeFile(
+    agent: AgentId,
+    path: string,
+    content: string,
+    summary: string,
+    check: { decision: 'allow' | 'deny'; detail: string; ms: number },
+    changes: SymbolChange[],
+  ) {
     const callId = newId()
     emit({ type: 'tool_call', agent, call_id: callId, tool: 'write_file', args: { path, summary } })
     status(agent, 'tool')
@@ -131,7 +195,7 @@ export function createMockTransport(): IdeTransport {
     files[agent][path] = content
     emit({ type: 'file_changed', agent, path, content })
     emit({ type: 'hook', agent, phase: 'PostToolUse', tool: 'write_file', mcp_tool: 'code_record_edit', decision: 'recorded', detail: summary, ms: 9 })
-    recordChange(agent, path, summary)
+    recordChanges(agent, path, changes, summary)
     emit({ type: 'graph_changed' })
     finishTool(agent, callId, 'write_file', true, summary)
     return { callId, written: true }
@@ -145,12 +209,55 @@ export function createMockTransport(): IdeTransport {
     finishTool(agent, callId, 'read_file', true, `read ${files[agent][path].split('\n').length} lines`)
   }
 
-  function recordChange(agent: AgentId, path: string, summary: string) {
-    const id = `chg-${newId()}`
-    graph.nodes.push({ id, label: 'Change', name: summary.slice(0, 40), kind: 'modified', props: { agent, path } })
-    graph.links.push({ source: `agent-${agent}`, target: id, type: 'MADE' })
-    const symbol = path === 'shop/cart.py' ? 'shop/cart.py::calculate_total' : 'shop/pricing.py::apply_tax'
-    if (graph.nodes.some((n) => n.id === symbol)) graph.links.push({ source: id, target: symbol, type: 'TOUCHED' })
+  function addLink(source: string, target: string, type: string) {
+    graph.links.push({ source, target, type })
+  }
+
+  /** One Change node per touched symbol, with a timestamp so the story can say "2 minutes ago". */
+  function recordChanges(agent: AgentId, path: string, changes: SymbolChange[], summary: string) {
+    const ts = Date.now()
+    for (const change of changes) {
+      const id = `chg-${newId()}`
+      const symbol = graph.nodes.find((n) => n.id === change.symbol)
+      if (symbol && change.newSignature) symbol.props.signature = change.newSignature
+      graph.nodes.push({
+        id,
+        label: 'Change',
+        name: symbol?.name ?? change.symbol,
+        kind: change.kind,
+        props: { agent, kind: change.kind, summary, path, ts },
+      })
+      addLink(agent, id, 'MADE')
+      addLink(id, change.symbol, 'TOUCHED')
+      lastChange[path] = id
+    }
+  }
+
+  /** Bob's denied write becomes Conflict nodes: RAISED by Bob, ON the symbol, AGAINST Alice's change. */
+  function recordConflicts(conflicts: ConflictInfo[]): string[] {
+    const ts = Date.now()
+    return conflicts.map((c) => {
+      const id = `conflict-${newId()}`
+      graph.nodes.push({
+        id,
+        label: 'Conflict',
+        name: c.kind,
+        kind: c.kind,
+        props: { agent: 'B', peer: c.peer, kind: c.kind, message: c.message, ts, resolution: 'pending' },
+      })
+      addLink('B', id, 'RAISED')
+      addLink(id, c.symbol, 'ON')
+      const against = lastChange[c.symbol.split('::')[0]]
+      if (against) addLink(id, against, 'AGAINST')
+      return id
+    })
+  }
+
+  function setResolution(ids: string[], choice: string) {
+    for (const id of ids) {
+      const node = graph.nodes.find((n) => n.id === id)
+      if (node) node.props.resolution = choice
+    }
   }
 
   async function runA() {
@@ -160,11 +267,25 @@ export function createMockTransport(): IdeTransport {
     await sleep(500)
     emit({ type: 'agent_message', agent: 'A', role: 'assistant', text: 'pricing.py has one flat rate. I will make the rate depend on the region.' })
     await sleep(400)
-    writeFile('A', 'shop/pricing.py', A_PRICING, 'apply_tax(amount, region) with TAX_RATES', { decision: 'allow', detail: 'no conflicts', ms: 14 })
+    writeFile(
+      'A',
+      'shop/pricing.py',
+      A_PRICING,
+      'apply_tax(amount, region) with TAX_RATES',
+      { decision: 'allow', detail: 'no conflicts', ms: 14 },
+      [{ symbol: 'shop/pricing.py::apply_tax', kind: 'signature', newSignature: 'apply_tax(amount, region)' }],
+    )
     await sleep(700)
     readFile('A', 'shop/cart.py', { decision: 'allow', detail: 'no peer changes' })
     await sleep(500)
-    writeFile('A', 'shop/cart.py', A_CART, 'calculate_total takes region and passes it on', { decision: 'allow', detail: 'no conflicts', ms: 12 })
+    writeFile(
+      'A',
+      'shop/cart.py',
+      A_CART,
+      'calculate_total takes region and passes it on',
+      { decision: 'allow', detail: 'no conflicts', ms: 12 },
+      [{ symbol: 'shop/cart.py::calculate_total', kind: 'signature', newSignature: 'calculate_total(items, discount_pct=0, region="US")' }],
+    )
     await sleep(400)
     emit({ type: 'agent_message', agent: 'A', role: 'assistant', text: 'Done. apply_tax takes a region, and calculate_total passes it through.' })
     usage('A', 1450, 320)
@@ -175,6 +296,17 @@ export function createMockTransport(): IdeTransport {
   async function runB() {
     await sleep(1800)
     status('B', 'thinking')
+    const intentId = `intent-${newId()}`
+    graph.nodes.push({
+      id: intentId,
+      label: 'Intent',
+      name: 'shipping',
+      kind: 'intent',
+      props: { agent: 'B', task: 'Add a $5 shipping fee under $50 in calculate_total and show it on the receipt', active: true, ts: Date.now() },
+    })
+    addLink('B', intentId, 'INTENDS')
+    addLink(intentId, 'shop/cart.py::calculate_total', 'TARGETS')
+    emit({ type: 'graph_changed' })
     readFile('B', 'shop/cart.py', {
       decision: 'context',
       detail: 'heads-up: A changed shop/pricing.py::apply_tax',
@@ -185,13 +317,18 @@ export function createMockTransport(): IdeTransport {
     await sleep(2200)
     status('B', 'thinking')
 
-    const attempt = writeFile('B', 'shop/cart.py', B_CART, 'add $5 shipping under $50 in calculate_total', {
-      decision: 'deny',
-      detail: '2 conflicts',
-      ms: 18,
-    })
+    const attempt = writeFile(
+      'B',
+      'shop/cart.py',
+      B_CART,
+      'add $5 shipping under $50 in calculate_total',
+      { decision: 'deny', detail: '2 conflicts', ms: 18 },
+      [{ symbol: 'shop/cart.py::calculate_total', kind: 'modified' }],
+    )
     if (attempt.written) return
-    emit({ type: 'conflict', agent: 'B', conflicts: CONFLICTS })
+    conflictIds = recordConflicts(CONFLICTS)
+    emit({ type: 'graph_changed' })
+    emit({ type: 'conflict', agent: 'B', conflicts: CONFLICTS, conflict_ids: conflictIds })
     const qid = newId()
     emit({
       type: 'ask_user',
@@ -206,6 +343,9 @@ export function createMockTransport(): IdeTransport {
     })
     status('B', 'waiting_user')
     const choice = await new Promise<string>((resolve) => pendingAnswers.set(qid, resolve))
+    bChoice = choice
+    setResolution(conflictIds, choice)
+    emit({ type: 'graph_changed' })
     emit({ type: 'ask_resolved', agent: 'B', question_id: qid, choice })
 
     if (choice === 'pause') {
@@ -216,9 +356,23 @@ export function createMockTransport(): IdeTransport {
         emit({ type: 'file_changed', agent: 'B', path: 'shop/cart.py', content: files.A['shop/cart.py'] })
         emit({ type: 'agent_message', agent: 'B', role: 'assistant', text: "Pulled Alice's cart.py. Redoing my edit on top of it." })
         await sleep(900)
-        writeFile('B', 'shop/cart.py', B_CART, 'add $5 shipping on top of Alice region change', { decision: 'allow', detail: 'no conflicts left', ms: 11 })
+        writeFile(
+          'B',
+          'shop/cart.py',
+          B_CART,
+          'add $5 shipping on top of Alice region change',
+          { decision: 'allow', detail: 'no conflicts left', ms: 11 },
+          [{ symbol: 'shop/cart.py::calculate_total', kind: 'modified' }],
+        )
       } else {
-        writeFile('B', 'shop/cart.py', B_CART, 'add $5 shipping (user override)', { decision: 'allow', detail: 'user override', ms: 11 })
+        writeFile(
+          'B',
+          'shop/cart.py',
+          B_CART_OVERRIDE,
+          'add $5 shipping (user override)',
+          { decision: 'allow', detail: 'user override', ms: 11 },
+          [{ symbol: 'shop/cart.py::calculate_total', kind: 'modified' }],
+        )
       }
       emit({ type: 'agent_message', agent: 'B', role: 'assistant', text: 'Shipping fee added in calculate_total.' })
     }
@@ -240,11 +394,68 @@ export function createMockTransport(): IdeTransport {
     busy[agent] = false
   }
 
+  /** Fresh state for each createSession, so a restart in the mock starts from the template again. */
+  function reset() {
+    ended = false
+    buffer = []
+    files = { A: { ...TEMPLATE }, B: { ...TEMPLATE } }
+    busy = { A: false, B: false }
+    graph = buildGraph()
+    lastChange = {}
+    conflictIds = []
+    bChoice = null
+  }
+
+  /** Merge check verdict: override leaves a call that plain git would never flag; adopt is clean. */
+  function mergeResult(): MergeResult {
+    const fileResults: MergeFile[] = Object.keys(TEMPLATE).map((path) => {
+      if (path === 'shop/cart.py' && bChoice === 'override') {
+        return {
+          path,
+          git: 'clean',
+          git_hunks: 0,
+          merged: B_CART_OVERRIDE,
+          base: 'template',
+          semantic: [
+            {
+              kind: 'both_changed',
+              symbol: 'shop/cart.py::calculate_total',
+              message: "Alice and Bob both rewrote calculate_total: Alice's version takes a region, Bob's does not.",
+            },
+            {
+              kind: 'call_mismatch',
+              symbol: 'shop/pricing.py::apply_tax',
+              message: "Bob's calculate_total calls apply_tax(total) with one argument, but Alice made region required.",
+            },
+          ],
+        }
+      }
+      if (path === 'shop/cart.py' && bChoice === 'adopt') {
+        return { path, git: 'clean', git_hunks: 0, merged: B_CART, base: 'pulled', semantic: [] }
+      }
+      return { path, git: 'clean', git_hunks: 0, merged: files.A[path] ?? TEMPLATE[path], base: 'template', semantic: [] }
+    })
+
+    if (bChoice === 'override') {
+      return {
+        files: fileResults,
+        verdict: {
+          status: 'semantic_conflict',
+          headline: 'Plain git merges this cleanly, but git0 finds a broken call',
+          detail: "calculate_total calls apply_tax with one argument. Alice made region required, so this fails at runtime, not at merge time.",
+        },
+      }
+    }
+    let detail = "Only Alice's changes are on the table so far."
+    if (bChoice === 'adopt') detail = "Bob pulled Alice's change and reworked his edit on top. No git conflicts and no semantic conflicts."
+    else if (bChoice === 'pause') detail = "Bob stopped. Only Alice's changes are merged."
+    return { files: fileResults, verdict: { status: 'safe', headline: 'Safe to merge', detail } }
+  }
+
   return {
     async createSession(): Promise<SessionCreated> {
       sid = newId()
-      ended = false
-      buffer.length = 0
+      reset()
       emit({
         type: 'session',
         session_id: sid,
@@ -306,21 +517,7 @@ export function createMockTransport(): IdeTransport {
     },
 
     async mergeCheck(): Promise<MergeResult> {
-      const paths = Object.keys(TEMPLATE)
-      return {
-        files: paths.map((path) => {
-          const aChanged = files.A[path] !== TEMPLATE[path]
-          const bChanged = files.B[path] !== TEMPLATE[path]
-          if (aChanged && bChanged && files.A[path] !== files.B[path]) {
-            return {
-              path,
-              conflicted: true,
-              merged: `<<<<<<< alice\n${files.A[path]}=======\n${files.B[path]}>>>>>>> bob\n`,
-            }
-          }
-          return { path, conflicted: false, merged: aChanged ? files.A[path] : files.B[path] }
-        }),
-      }
+      return mergeResult()
     },
 
     async end() {
@@ -333,37 +530,4 @@ export function createMockTransport(): IdeTransport {
       // The mock has no server to notify.
     },
   }
-}
-
-function buildGraph(): GraphView {
-  const nodes: GraphView['nodes'] = [
-    ...['shop/pricing.py', 'shop/cart.py', 'shop/receipts.py', 'shop/checkout.py'].map((p) => ({
-      id: p,
-      label: 'File',
-      name: p,
-      kind: 'file',
-      props: {},
-    })),
-    ...[
-      'shop/pricing.py::apply_tax',
-      'shop/pricing.py::apply_discount',
-      'shop/cart.py::subtotal',
-      'shop/cart.py::calculate_total',
-      'shop/receipts.py::format_receipt',
-      'shop/checkout.py::checkout',
-    ].map((id) => ({ id, label: 'Symbol', name: id.split('::')[1], kind: 'function', props: { path: id.split('::')[0] } })),
-    ...AGENTS.map((a) => ({ id: `agent-${a}`, label: 'Agent', name: a === 'A' ? 'Alice' : 'Bob', kind: 'agent', props: {} })),
-  ]
-  const links: GraphView['links'] = [
-    { source: 'shop/pricing.py', target: 'shop/pricing.py::apply_tax', type: 'DEFINES' },
-    { source: 'shop/pricing.py', target: 'shop/pricing.py::apply_discount', type: 'DEFINES' },
-    { source: 'shop/cart.py', target: 'shop/cart.py::subtotal', type: 'DEFINES' },
-    { source: 'shop/cart.py', target: 'shop/cart.py::calculate_total', type: 'DEFINES' },
-    { source: 'shop/receipts.py', target: 'shop/receipts.py::format_receipt', type: 'DEFINES' },
-    { source: 'shop/checkout.py', target: 'shop/checkout.py::checkout', type: 'DEFINES' },
-    { source: 'shop/cart.py::calculate_total', target: 'shop/cart.py::subtotal', type: 'CALLS' },
-    { source: 'shop/cart.py::calculate_total', target: 'shop/pricing.py::apply_tax', type: 'CALLS' },
-    { source: 'shop/checkout.py::checkout', target: 'shop/cart.py::calculate_total', type: 'CALLS' },
-  ]
-  return { nodes, links }
 }

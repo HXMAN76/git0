@@ -26,7 +26,7 @@ print(json.dumps({"executionTimeout": ["900"], "commands": [
     "PW=$(grep '^FALKORDB_PASSWORD=' /opt/membranch/.env | cut -d= -f2-)",
     "docker run --rm --network membranch_default -v /opt/membranch/test:/w -v /opt/membranch/uvcache:/root/.cache/uv"
     ' -w /w -e FALKORDB_URL="redis://:$PW@falkordb:6379" ghcr.io/astral-sh/uv:python3.12-bookworm-slim'
-    f" sh -c 'uv sync -q --frozen && uv run pytest -q -x {args} 2>&1 | tail -60'",
+    f" sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq git >/dev/null && uv sync -q --frozen && uv run pytest -q -x {args} 2>&1 | tail -60'",
 ]}))
 PY
 

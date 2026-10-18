@@ -1,19 +1,31 @@
 // Bottom panel: GIT0 RELAY log, GRAPH (FalkorDB code graph), PROBLEMS (conflicts), MERGE CHECK.
+// Its height is owned by App (drag sash + persisted); this component only renders it.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import '@falkordb/canvas'
-import type { Data, FalkorDBCanvas, GraphLink, GraphNode } from '@falkordb/canvas'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { ApiError } from '../api'
 import { GRAPH_COLORS, GRAPH_LEGEND, toCanvasData } from '../lib'
+import { hotspots } from '../insights'
 import type { IdeState, LogEntry, Tone } from '../state'
-import { AGENT_META, type GraphView, type MergeResult } from '../types'
+import { AGENT_META, type GraphView, type MergeFile, type MergeResult, type MergeVerdict, type VerdictStatus } from '../types'
+import { CanvasNotice, GraphCanvas } from './GraphCanvas'
+import { GraphCaption } from './GraphOverlay'
+import { startGraphTour, type PanelTab } from '../tour'
+import { useGraphView } from './useGraphView'
 
-type TabId = 'relay' | 'graph' | 'problems' | 'merge'
+type TabId = PanelTab
 
 interface BottomPanelProps {
   state: IdeState
   fetchGraph: () => Promise<GraphView>
   mergeCheck: () => Promise<MergeResult>
+  /** Height in px. Ignored while maximized, when the panel takes the whole editor area. */
+  height: number
+  maximized: boolean
+  onToggleMaximize: () => void
+  onOpenGraph: () => void
+  /** The active tab is owned by App so the welcome tour can switch it. */
+  tab: TabId
+  onTabChange: (tab: TabId) => void
 }
 
 const TABS: { id: TabId; label: string }[] = [
@@ -23,11 +35,11 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'merge', label: 'MERGE CHECK' },
 ]
 
-export function BottomPanel({ state, fetchGraph, mergeCheck }: BottomPanelProps) {
-  const [tab, setTab] = useState<TabId>('relay')
+export function BottomPanel({ state, fetchGraph, mergeCheck, height, maximized, onToggleMaximize, onOpenGraph, tab, onTabChange }: BottomPanelProps) {
   const problemCount = state.conflicts.length
+  const style: CSSProperties = maximized ? { flex: '1 1 auto', minHeight: 0 } : { height, flexShrink: 0 }
   return (
-    <section className="flex h-[240px] shrink-0 flex-col border-t border-[#2b2b2b] bg-[#1e1e1e] lg:h-[205px]" aria-label="Panel">
+    <section className="flex flex-col border-t border-[#2b2b2b] bg-[#1e1e1e]" style={style} aria-label="Panel">
       <div role="tablist" className="flex h-[30px] shrink-0 items-center gap-1 border-b border-[#2b2b2b] bg-[#252526] px-2 text-[11px]">
         {TABS.map((t) => (
           <button
@@ -35,7 +47,8 @@ export function BottomPanel({ state, fetchGraph, mergeCheck }: BottomPanelProps)
             type="button"
             role="tab"
             aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => onTabChange(t.id)}
+            data-tour={`tab-${t.id}`}
             className={`flex items-center gap-1.5 border-b-2 px-2 py-1 ${tab === t.id ? 'border-[#e7e7e7] text-[#e7e7e7]' : 'border-transparent text-[#9d9d9d] hover:text-[#cccccc]'}`}
           >
             {t.label}
@@ -44,10 +57,23 @@ export function BottomPanel({ state, fetchGraph, mergeCheck }: BottomPanelProps)
             )}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={onToggleMaximize}
+          className="ml-auto flex size-6 items-center justify-center rounded-sm text-[#cccccc] hover:bg-[#3c3c3c]"
+          aria-label={maximized ? 'Restore panel size' : 'Maximize panel'}
+          title={maximized ? 'Restore panel size' : 'Maximize panel'}
+        >
+          <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            {maximized ? <path d="M4 10l4-4 4 4" /> : <path d="M4 6l4 4 4-4" />}
+          </svg>
+        </button>
       </div>
       <div className="min-h-0 flex-1">
         {tab === 'relay' && <RelayLog log={state.log} />}
-        {tab === 'graph' && <GraphPanel version={state.graphVersion} highlight={state.highlight} fetchGraph={fetchGraph} live={state.sessionId !== null} />}
+        {tab === 'graph' && (
+          <GraphPanel version={state.graphVersion} highlight={state.highlight} fetchGraph={fetchGraph} live={state.sessionId !== null} onOpen={onOpenGraph} />
+        )}
         {tab === 'problems' && <Problems state={state} />}
         {tab === 'merge' && <MergeCheck mergeCheck={mergeCheck} live={state.sessionId !== null && state.phase !== 'ended'} />}
       </div>
@@ -122,6 +148,54 @@ function Problems({ state }: { state: IdeState }) {
 
 // ---------- MERGE CHECK ----------
 
+// own_bug = a bug already inside one clone, not caused by merging, so it gets a neutral badge.
+const SEMANTIC_BADGE: Record<string, string> = {
+  both_changed: 'BOTH',
+  call_mismatch: 'CALL',
+  own_bug: 'OWN BUG',
+  syntax_error: 'SYNTAX',
+}
+
+const VERDICT_STYLE: Record<VerdictStatus, { box: string; title: string }> = {
+  safe: { box: 'border-[#3c7d4f] bg-[#16301f] text-[#c9f0d4]', title: 'SAFE' },
+  git_conflict: { box: 'border-[#f14c4c] bg-[#4a1717] text-[#ffd7d7]', title: 'GIT CONFLICT' },
+  semantic_conflict: { box: 'border-[#e5c07b] bg-[#3d3210] text-[#fff1c2]', title: 'SEMANTIC CONFLICT' },
+}
+
+function VerdictBanner({ verdict }: { verdict: MergeVerdict }) {
+  const style = VERDICT_STYLE[verdict.status]
+  return (
+    <div role="status" className={`shrink-0 rounded-sm border-l-4 px-3 py-2 ${style.box}`}>
+      <div className="text-[10px] font-bold tracking-wider opacity-80">{style.title}</div>
+      <div className="text-[14px] font-semibold">{verdict.headline}</div>
+      {verdict.detail && <div className="mt-0.5 leading-relaxed opacity-90">{verdict.detail}</div>}
+    </div>
+  )
+}
+
+function GitCell({ file }: { file: MergeFile }) {
+  if (file.git === 'clean') return <span className="rounded-sm bg-[#3c7d4f] px-1.5 text-[10px] font-semibold text-white">CLEAN</span>
+  return (
+    <span className="rounded-sm bg-[#f14c4c] px-1.5 text-[10px] font-semibold text-white">
+      CONFLICT {file.git_hunks} {file.git_hunks === 1 ? 'hunk' : 'hunks'}
+    </span>
+  )
+}
+
+function Git0Cell({ file }: { file: MergeFile }) {
+  if (file.semantic.length === 0) return <span className="rounded-sm bg-[#3c7d4f] px-1.5 text-[10px] font-semibold text-white">OK</span>
+  return (
+    <ul className="space-y-1">
+      {file.semantic.map((s, i) => (
+        <li key={i} className="leading-snug text-[#fff1c2]">
+          <span className={`mr-1 rounded-sm px-1 text-[10px] font-semibold ${s.kind === 'own_bug' ? 'bg-[#3c3c3c]' : 'bg-[#7a5f00]'}`}>{SEMANTIC_BADGE[s.kind] ?? 'NOTE'}</span>
+          {s.message}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function MergeCheck({ mergeCheck, live }: { mergeCheck: () => Promise<MergeResult>; live: boolean }) {
   const [result, setResult] = useState<MergeResult | null>(null)
   const [running, setRunning] = useState(false)
@@ -140,153 +214,104 @@ function MergeCheck({ mergeCheck, live }: { mergeCheck: () => Promise<MergeResul
   }
 
   return (
-    <div className="flex h-full flex-col gap-2 p-2 text-[12px]">
-      <div className="flex items-center gap-3">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto p-2 text-[12px]">
+      <div className="flex shrink-0 flex-wrap items-center gap-3">
         <button type="button" onClick={() => void run()} disabled={!live || running} className="rounded-sm bg-[#0e639c] px-3 py-1 text-white hover:bg-[#1177bb] disabled:opacity-40">
           {running ? 'Running…' : 'Run merge check'}
         </button>
-        <span className="text-[#9d9d9d]">What plain git would do: 3-way merge of A and B against the template, per file.</span>
+        <span className="text-[#9d9d9d]">
+          Plain git merges each file on its own. git0 also checks that the functions still agree with each other.
+        </span>
       </div>
       {error && <p className="text-[#f48771]">{error}</p>}
       {result && (
-        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
-          {result.files.map((f) => (
-            <details key={f.path} className="rounded-sm bg-[#252526] px-2 py-1">
-              <summary className="flex cursor-pointer items-center gap-2 font-mono">
-                <span className={`rounded-sm px-1.5 text-[10px] font-semibold ${f.conflicted ? 'bg-[#f14c4c] text-white' : 'bg-[#3c7d4f] text-white'}`}>
-                  {f.conflicted ? 'CONFLICT' : 'CLEAN'}
-                </span>
-                {f.path}
-              </summary>
-              <pre className="mt-1 max-h-[140px] overflow-auto rounded-sm bg-[#1e1e1e] p-2 font-mono text-[11px] text-[#d4d4d4]">{f.merged}</pre>
-            </details>
-          ))}
-        </div>
+        <>
+          <VerdictBanner verdict={result.verdict} />
+          <div className="min-h-0 overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-left">
+              <thead className="text-[10px] uppercase tracking-wide text-[#9d9d9d]">
+                <tr className="border-b border-[#2b2b2b]">
+                  <th className="px-2 py-1 font-semibold">File</th>
+                  <th className="px-2 py-1 font-semibold">Plain git says</th>
+                  <th className="px-2 py-1 font-semibold">git0 says</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.files.map((f) => (
+                  <MergeRow key={f.path} file={f} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
+      {!result && !error && <p className="text-[#6a6a6a]">Run the check to compare what plain git would do with what git0 sees.</p>}
     </div>
   )
 }
 
-// ---------- GRAPH ----------
+function MergeRow({ file }: { file: MergeFile }) {
+  const base = file.base === 'pulled' ? "vs Alice's version you pulled" : 'vs original'
+  return (
+    <tr className="border-b border-[#2b2b2b] align-top">
+      <td className="px-2 py-1.5 font-mono">
+        <div>{file.path}</div>
+        <span className="mt-0.5 inline-block rounded-sm bg-[#333] px-1.5 text-[10px] text-[#cccccc]">{base}</span>
+        <details className="mt-1">
+          <summary className="cursor-pointer text-[11px] text-[#9d9d9d] hover:text-[#cccccc]">merged text</summary>
+          <pre className="mt-1 max-h-[160px] max-w-[420px] overflow-auto rounded-sm bg-[#1e1e1e] p-2 font-mono text-[11px] text-[#d4d4d4]">{file.merged}</pre>
+        </details>
+      </td>
+      <td className="px-2 py-1.5">
+        <GitCell file={file} />
+      </td>
+      <td className="px-2 py-1.5">
+        <Git0Cell file={file} />
+      </td>
+    </tr>
+  )
+}
 
-type CanvasHandle = FalkorDBCanvas
+// ---------- GRAPH ----------
 
 interface GraphPanelProps {
   version: number
   highlight: string[]
   fetchGraph: () => Promise<GraphView>
   live: boolean
+  onOpen: () => void
 }
 
-/** Refetches on every graph_changed (version bump). Mounted only while the tab is open, so it is sized correctly. */
-function GraphPanel({ version, highlight, fetchGraph, live }: GraphPanelProps) {
-  const [view, setView] = useState<GraphView | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!live) return
-    let cancelled = false
-    fetchGraph().then(
-      (v) => {
-        if (!cancelled) {
-          setView(v)
-          setError(null)
-        }
-      },
-      (err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-    // Only a new graph_changed (version bump) refetches. fetchGraph is bound to the session.
-  }, [version, live, fetchGraph])
-
+/** The small graph: a plain-English caption on top, the canvas underneath. Refetches on every graph_changed. */
+function GraphPanel({ version, highlight, fetchGraph, live, onOpen }: GraphPanelProps) {
+  const { view, error } = useGraphView(version, live, fetchGraph)
   const data = useMemo(() => (view ? toCanvasData(view) : null), [view])
   const highlightKey = highlight.join('|')
+  const spots = useMemo(() => (view ? hotspots(view).length : 0), [view])
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#0a0a0a]">
-      {data && <GraphCanvas data={data} highlightKey={highlightKey} />}
-      {error && <Overlay alert>Graph could not load: {error}</Overlay>}
-      {!error && !view && <Overlay>Loading graph…</Overlay>}
-      {view && view.nodes.length === 0 && <Overlay>The graph is empty until an agent records an edit.</Overlay>}
-      {view && (
-        <div className="pointer-events-none absolute left-2 top-2 flex flex-wrap gap-3 rounded bg-[#1e1e1e]/85 px-2 py-1 text-[11px] text-[#cccccc]">
-          {GRAPH_LEGEND.map((k) => (
-            <span key={k} className="flex items-center gap-1">
-              <span className="inline-block size-2 rounded-full" style={{ background: GRAPH_COLORS[k] }} />
-              {k}
+    <div className="flex h-full w-full flex-col overflow-hidden bg-[#0a0a0a]">
+      <GraphCaption view={view} onOpen={onOpen} onHelp={() => startGraphTour('panel')} />
+      <div data-tour="graph-canvas" className="relative min-h-0 flex-1">
+        {data && <GraphCanvas data={data} highlight={highlightKey ? highlightKey.split('|') : []} />}
+        {error && <CanvasNotice alert>Graph could not load: {error}</CanvasNotice>}
+        {!error && !view && <CanvasNotice>Loading graph…</CanvasNotice>}
+        {view && view.nodes.length === 0 && <CanvasNotice>The graph is empty until an agent records an edit.</CanvasNotice>}
+        {view && (
+          <div data-tour="graph-legend" className="pointer-events-none absolute left-2 top-2 flex flex-wrap gap-3 rounded bg-[#1e1e1e]/85 px-2 py-1 text-[11px] text-[#cccccc]">
+            {GRAPH_LEGEND.map((k) => (
+              <span key={k} className="flex items-center gap-1">
+                <span className="inline-block size-2 rounded-full" style={{ background: GRAPH_COLORS[k] }} />
+                {k}
+              </span>
+            ))}
+            <span>
+              {view.nodes.length} nodes, {view.links.length} edges{spots > 0 ? `, ${spots} hotspot${spots === 1 ? '' : 's'}` : ''}
+              {highlight.length > 0 ? `, ${highlight.length} on conflict path` : ''}
             </span>
-          ))}
-          <span>
-            {view.nodes.length} nodes, {view.links.length} edges{highlight.length > 0 ? `, ${highlight.length} on conflict path` : ''}
-          </span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function Overlay({ alert, children }: { alert?: boolean; children: ReactNode }) {
-  return (
-    <div role={alert ? 'alert' : 'status'} className="absolute inset-0 flex items-center justify-center p-6 text-center text-[12px] text-[#9d9d9d]">
-      {children}
-    </div>
-  )
-}
-
-/** Drives <falkordb-canvas> imperatively, the same way the memory graph does. Highlight = focus mode. */
-function GraphCanvas({ data, highlightKey }: { data: Data; highlightKey: string }) {
-  const hostRef = useRef<HTMLDivElement>(null)
-  const canvasRef = useRef<CanvasHandle>(null)
-
-  // Mount once: config and sizing. The component defaults to the window size, so the box is pushed in.
-  useEffect(() => {
-    const host = hostRef.current
-    const canvas = canvasRef.current
-    if (!host || !canvas || typeof canvas.setConfig !== 'function') return
-    canvas.setConfig({
-      backgroundColor: '#0a0a0a',
-      foregroundColor: '#e5e7eb',
-      captionsKeys: ['name'],
-    })
-    const syncSize = () => {
-      const { width, height } = host.getBoundingClientRect()
-      canvas.setWidth(Math.floor(width))
-      canvas.setHeight(Math.floor(height))
-    }
-    syncSize()
-    const observer = new ResizeObserver(syncSize)
-    observer.observe(host)
-    return () => observer.disconnect()
-  }, [])
-
-  // setGraphData keeps positions of nodes already on screen, so a new edit does not reshuffle the layout.
-  useEffect(() => {
-    canvasRef.current?.setGraphData(data)
-  }, [data])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const lit = new Set(highlightKey ? highlightKey.split('|') : [])
-    const isLit = (n: GraphNode) => lit.has(String(n.data.gid))
-    const linkLit = (l: GraphLink) => isLit(l.source) && isLit(l.target)
-    canvas.setConfig({
-      dimmed: lit.size > 0,
-      isNodeDimmed: (n: GraphNode) => !isLit(n),
-      isLinkDimmed: (l: GraphLink) => !linkLit(l),
-      isNodeSelected: isLit,
-      isLinkSelected: linkLit,
-    })
-    canvas.refresh()
-  }, [highlightKey, data])
-
-  return (
-    <div ref={hostRef} className="absolute inset-0">
-      <falkordb-canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, display: 'block' }} />
+          </div>
+        )}
+      </div>
     </div>
   )
 }

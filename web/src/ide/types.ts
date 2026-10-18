@@ -9,7 +9,7 @@ export const AGENT_META: Record<AgentId, { owner: string; root: string; color: s
   B: { owner: 'Bob', root: "BOB'S LAPTOP", color: '#c586c0' },
 }
 
-export type AgentStatus = 'idle' | 'thinking' | 'tool' | 'waiting_user' | 'error'
+export type AgentStatus = 'idle' | 'thinking' | 'tool' | 'waiting_user' | 'rate_limited' | 'error'
 export type ConflictKind = 'same_symbol' | 'dependency' | 'reverse_dependency' | 'intent'
 
 export interface ConflictInfo {
@@ -48,14 +48,35 @@ export interface SessionCreated {
   presets?: Preset[]
 }
 
+/** Plain git's verdict for one file (3-way merge of Alice and Bob against the base). */
+export type GitStatus = 'clean' | 'conflict'
+/** A problem plain git cannot see: the merge is textually clean but the code is wrong. */
+export interface SemanticFinding {
+  kind: 'both_changed' | 'call_mismatch' | 'own_bug'
+  symbol: string
+  message: string
+}
+
 export interface MergeFile {
   path: string
-  conflicted: boolean
+  git: GitStatus
+  git_hunks: number
   merged: string
+  /** "template": compared with the original. "pulled": Bob pulled Alice's version first. */
+  base: 'template' | 'pulled'
+  semantic: SemanticFinding[]
+}
+
+export type VerdictStatus = 'safe' | 'git_conflict' | 'semantic_conflict'
+export interface MergeVerdict {
+  status: VerdictStatus
+  headline: string
+  detail: string
 }
 
 export interface MergeResult {
   files: MergeFile[]
+  verdict: MergeVerdict
 }
 
 export interface GraphNode {
@@ -98,7 +119,7 @@ export const IDE_EVENT_TYPES = [
 
 export type IdeEvent =
   | { type: 'session'; ts: number; session_id: string; agents: Record<AgentId, AgentInfo>; files: string[]; presets?: Preset[] }
-  | { type: 'agent_status'; ts: number; agent: AgentId; status: AgentStatus }
+  | { type: 'agent_status'; ts: number; agent: AgentId; status: AgentStatus; detail?: string }
   | { type: 'agent_message'; ts: number; agent: AgentId; role: 'user' | 'assistant'; text: string }
   | { type: 'tool_call'; ts: number; agent: AgentId; call_id: string; tool: string; args: Record<string, unknown> }
   | { type: 'tool_result'; ts: number; agent: AgentId; call_id: string; tool: string; ok: boolean; summary: string }
@@ -115,7 +136,7 @@ export type IdeEvent =
     }
   | { type: 'file_changed'; ts: number; agent: AgentId; path: string; content: string }
   | { type: 'graph_changed'; ts: number }
-  | { type: 'conflict'; ts: number; agent: AgentId; conflicts: ConflictInfo[] }
+  | { type: 'conflict'; ts: number; agent: AgentId; conflicts: ConflictInfo[]; conflict_ids?: string[] }
   | { type: 'ask_user'; ts: number; agent: AgentId; question_id: string; question: string; options: AskOption[] }
   | { type: 'ask_resolved'; ts: number; agent: AgentId; question_id: string; choice: string }
   | { type: 'peer_notice'; ts: number; agent: AgentId; from: AgentId; message: string }

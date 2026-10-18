@@ -11,8 +11,12 @@ const STATUS: Record<AgentStatus, { label: string; cls: string }> = {
   thinking: { label: 'thinking', cls: 'bg-[#264f78] text-[#dcefff]' },
   tool: { label: 'running tool', cls: 'bg-[#4b3a63] text-[#f0ddff]' },
   waiting_user: { label: 'waiting for you', cls: 'bg-[#7a5f00] text-[#fff1c2]' },
+  rate_limited: { label: 'waiting (rate limit)', cls: 'bg-[#b45309] text-[#fff7ed]' },
   error: { label: 'error', cls: 'bg-[#6e1f1f] text-[#ffd7d7]' },
 }
+
+// Long provider errors wrap and scroll instead of pushing the chat off screen (about six lines tall).
+const CAPPED_TEXT = 'max-h-[6.5rem] overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]'
 
 const KIND_LABEL: Record<ConflictInfo['kind'], string> = {
   same_symbol: 'same symbol',
@@ -43,7 +47,11 @@ export function AgentPanel({ agent, info, agentState, presets, live, onSend, onA
   }, [count])
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col border-b border-[#2b2b2b] bg-[#1e1e1e] text-[13px] text-[#cccccc] last:border-b-0" aria-label={`Agent ${agent} chat`}>
+    <section
+      data-tour={`agent-${agent}`}
+      className="flex min-h-0 flex-1 flex-col border-b border-[#2b2b2b] bg-[#1e1e1e] text-[13px] text-[#cccccc] last:border-b-0"
+      aria-label={`Agent ${agent} chat`}
+    >
       <header className="flex shrink-0 items-center gap-2 border-b border-[#2b2b2b] bg-[#252526] px-3 py-1.5">
         <span className="flex size-5 items-center justify-center rounded-full font-mono text-[11px] font-bold text-[#1e1e1e]" style={{ background: meta.color }}>
           {agent}
@@ -56,6 +64,12 @@ export function AgentPanel({ agent, info, agentState, presets, live, onSend, onA
           {status.label}
         </span>
       </header>
+
+      {agentState.status === 'rate_limited' && agentState.detail && (
+        <p role="status" className={`shrink-0 border-b border-[#2b2b2b] bg-[#3a2a10] px-3 py-1.5 text-[12px] text-[#fcd9a8] ${CAPPED_TEXT}`}>
+          {agentState.detail}
+        </p>
+      )}
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2" aria-live="polite">
         {count === 0 && <p className="text-[12px] text-[#6a6a6a]">Send a task to Agent {agent}, or run the scenario.</p>}
@@ -106,7 +120,10 @@ function TimelineItem({ item, agent, onAnswer }: { item: ChatItem; agent: AgentI
               ? 'border-[#4fc1ff] text-[#9cdcfe]'
               : 'border-[#3c7d4f] text-[#89d185]'
       return (
-        <div className={`ml-4 rounded-sm border-l-2 bg-[#252526] px-2 py-1 font-mono text-[11px] ${tone}`}>
+        <div
+          data-coach={item.phase === 'PreToolUse' ? 'hook' : undefined}
+          className={`ml-4 rounded-sm border-l-2 bg-[#252526] px-2 py-1 font-mono text-[11px] ${tone}`}
+        >
           <span>
             {item.phase} · {item.tool} → MCP {item.mcpTool} → <strong>{item.decision.toUpperCase()}</strong>
           </span>
@@ -125,7 +142,7 @@ function TimelineItem({ item, agent, onAnswer }: { item: ChatItem; agent: AgentI
 
     case 'conflict':
       return (
-        <div role="alert" className="rounded-md border border-[#f14c4c] bg-[#3b1d1d] px-3 py-2 text-[12px] text-[#ffd7d7]">
+        <div role="alert" data-coach="conflict" className="rounded-md border border-[#f14c4c] bg-[#3b1d1d] px-3 py-2 text-[12px] text-[#ffd7d7]">
           <div className="mb-1 font-semibold text-[#f48771]">Conflict caught before the write</div>
           <ul className="space-y-1.5">
             {item.conflicts.map((c, i) => (
@@ -142,7 +159,7 @@ function TimelineItem({ item, agent, onAnswer }: { item: ChatItem; agent: AgentI
       return <AskCard item={item} onAnswer={onAnswer} />
 
     case 'error':
-      return <div className="rounded-sm bg-[#5a1d1d] px-2 py-1 text-[12px] text-[#ffd7d7]">{item.message}</div>
+      return <div className={`rounded-sm bg-[#5a1d1d] px-2 py-1 text-[12px] text-[#ffd7d7] ${CAPPED_TEXT}`}>{item.message}</div>
   }
 }
 
@@ -171,7 +188,7 @@ function AskCard({
   }
 
   return (
-    <div role="group" aria-label="Question for you" className="rounded-md border border-[#4fc1ff] bg-[#1f2a3a] px-3 py-2 text-[12px]">
+    <div role="group" aria-label="Question for you" data-coach="ask" className="rounded-md border border-[#4fc1ff] bg-[#1f2a3a] px-3 py-2 text-[12px]">
       <div className="mb-2 font-semibold text-[#9cdcfe]">Your decision</div>
       <p className="mb-2 leading-snug">{item.question}</p>
       <div className="space-y-1.5">

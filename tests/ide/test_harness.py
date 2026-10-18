@@ -29,6 +29,8 @@ class FakeHooks:
         self.pre: list[tuple[str, dict]] = []
         self.posted: list[str] = []
         self.acked: list[str] = []
+        self.recorded: list[list[dict]] = []
+        self.resolved: list[tuple[list[str], str]] = []
 
     async def pre_tool_use(self, tool: str, args: dict) -> HookDecision:
         self.pre.append((tool, args))
@@ -48,6 +50,13 @@ class FakeHooks:
 
     async def acknowledge(self, ids: list[str]) -> None:
         self.acked.extend(ids)
+
+    async def record_conflicts(self, conflicts: list[dict]) -> list[str]:
+        self.recorded.append(conflicts)
+        return [f"cf{i}" for i, _ in enumerate(conflicts)]
+
+    async def resolve_conflicts(self, ids: list[str], resolution: str) -> None:
+        self.resolved.append((ids, resolution))
 
     async def close(self) -> None:
         return None
@@ -151,6 +160,8 @@ async def test_conflict_override_writes_and_acknowledges(tmp_path: Path) -> None
     result = [e for e in events(session, "tool_result") if e["tool"] == "write_file"][-1]
     assert result["ok"] is True and "override" in result["summary"]
     assert events(session, "conflict")[0]["conflicts"][0]["peer"] == "B"
+    assert events(session, "conflict")[0]["conflict_ids"] == ["cf0"]
+    assert len(hooks.recorded) == 1 and hooks.resolved == [(["cf0"], "override")]
 
 
 async def test_conflict_adopt_copies_peer_file_and_writes_nothing(tmp_path: Path) -> None:
@@ -182,6 +193,7 @@ async def test_conflict_adopt_copies_peer_file_and_writes_nothing(tmp_path: Path
     assert (agent.workspace / "shop" / "pricing.py").read_text(encoding="utf-8") == "PEER\n"
     assert hooks.acked == ["peer2"]
     assert hooks.posted == []  # adopt is not a write: nothing is recorded as Alice's edit
+    assert hooks.resolved == [(["cf0"], "adopt")]
     result = [e for e in events(session, "tool_result") if e["tool"] == "write_file"][-1]
     assert result["ok"] is False and "BLOCKED" in result["summary"]
 
@@ -213,6 +225,7 @@ async def test_conflict_pause_writes_nothing(tmp_path: Path) -> None:
         encoding="utf-8"
     ) == "def apply_tax(amount):\n    return amount\n"
     assert hooks.posted == []
+    assert hooks.resolved == [(["cf0"], "pause")]
 
 
 async def test_path_escape_is_refused_before_any_hook(tmp_path: Path) -> None:

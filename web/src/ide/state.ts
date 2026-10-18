@@ -33,6 +33,8 @@ export type ChatItem =
 
 export interface AgentState {
   status: AgentStatus
+  /** Why the status is what it is, e.g. the rate-limit wait. Empty for most statuses. */
+  detail: string
   items: ChatItem[]
   usage: { input: number; output: number; requests: number }
 }
@@ -91,7 +93,7 @@ export interface IdeState {
 const MAX_LOG = 800
 const MAX_ITEMS = 300
 
-const emptyAgent = (): AgentState => ({ status: 'idle', items: [], usage: { input: 0, output: 0, requests: 0 } })
+const emptyAgent = (): AgentState => ({ status: 'idle', detail: '', items: [], usage: { input: 0, output: 0, requests: 0 } })
 const emptyEditors = (): EditorGroupState => ({ tabs: [], active: null, revealSeq: 0 })
 
 export function initialState(): IdeState {
@@ -173,7 +175,7 @@ function applyEvent(s: IdeState, ev: IdeEvent): IdeState {
       return { ...s, sessionId: ev.session_id, agentInfo: ev.agents, files: ev.files, presets: ev.presets ?? s.presets }
 
     case 'agent_status':
-      return { ...s, agents: { ...s.agents, [ev.agent]: { ...s.agents[ev.agent], status: ev.status } } }
+      return { ...s, agents: { ...s.agents, [ev.agent]: { ...s.agents[ev.agent], status: ev.status, detail: ev.detail ?? '' } } }
 
     case 'agent_message':
       return pushItem(s, ev.agent, (id) => ({ id, kind: 'message', role: ev.role, text: ev.text }))

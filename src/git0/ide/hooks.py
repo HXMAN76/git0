@@ -316,6 +316,43 @@ class RelayHooks:
         now = self._now_ms()
         return [describe_notice(n, now) for n in notices]
 
+    async def record_conflicts(self, conflicts: list[dict[str, Any]]) -> list[str]:
+        """Put the conflicts a blocked write raised into the graph. Returns the Conflict node ids."""
+        started = time.perf_counter()
+        payload = await self._call(
+            "code_record_conflicts",
+            {"tenant": self.session_id, "agent": self.agent_id, "conflicts": conflicts},
+        )
+        ids = list((payload or {}).get("conflict_ids", []))
+        self._hook(
+            "PreToolUse",
+            "write_file",
+            "code_record_conflicts",
+            "recorded",
+            f"{len(ids)} conflict(s)",
+            started,
+        )
+        return ids
+
+    async def resolve_conflicts(self, conflict_ids: list[str], resolution: str) -> None:
+        """Store the human's choice (adopt | override | pause) on the Conflict nodes."""
+        if not conflict_ids:
+            return
+        started = time.perf_counter()
+        payload = await self._call(
+            "code_resolve_conflicts",
+            {"tenant": self.session_id, "conflict_ids": conflict_ids, "resolution": resolution},
+        )
+        resolved = int((payload or {}).get("resolved", 0))
+        self._hook(
+            "PreToolUse",
+            "write_file",
+            "code_resolve_conflicts",
+            "resolved",
+            f"{resolution}: {resolved}",
+            started,
+        )
+
     async def acknowledge(self, change_ids: list[str]) -> None:
         if not change_ids:
             return

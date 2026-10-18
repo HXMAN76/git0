@@ -166,3 +166,61 @@ async def test_record_edit_marks_removed_symbols_and_drops_their_defines(relay):
     rec = await relay.record_edit("A", PRICING, src(PRICING), removed_src)
     assert "removed apply_discount" in rec.summary
     assert "shop/pricing.py::apply_discount" not in await relay.symbol_ids()
+
+
+def link_set(view: dict) -> set[tuple[str, str, str]]:
+    return {(link["source"], link["target"], link["type"]) for link in view["links"]}
+
+
+async def test_record_conflicts_puts_conflict_nodes_in_the_graph(relay):
+    rec = await relay.record_edit("A", CART, src(CART), CART_NEW)
+    result = await relay.check_edit("B", CART, src(CART), CART_NEW.replace("shipping=5", "shipping=6"))
+    assert result.blocking
+    ids = await relay.record_conflicts("B", result.conflicts)
+    assert len(ids) == len(result.conflicts)
+
+    view = await relay.view()
+    conflict_nodes = {n["id"]: n for n in view["nodes"] if n["label"] == "Conflict"}
+    assert set(conflict_nodes) == set(ids)
+    for n in conflict_nodes.values():
+        assert n["props"]["agent"] == "B" and n["props"]["resolution"] == "pending"
+        assert n["props"]["ts"] > 0 and n["props"]["message"]
+
+    same = next(i for i, c in zip(ids, result.conflicts, strict=True) if c.kind == "same_symbol")
+    links = link_set(view)
+    assert ("B", same, "RAISED") in links
+    assert (same, "shop/cart.py::calculate_total", "ON") in links
+    peer_change = next(c.peer_change_id for c in result.conflicts if c.kind == "same_symbol")
+    assert peer_change == rec.change_ids[0]
+    assert (same, peer_change, "AGAINST") in links
+
+
+async def test_intent_conflict_is_recorded_without_an_against_link(relay):
+    await relay.announce_intent("A", "add region tax", ["shop/cart.py::calculate_total"])
+    result = await relay.check_edit("B", CART, src(CART), CART_NEW)
+    ids = await relay.record_conflicts("B", result.conflicts)
+    assert len(ids) == 1 and result.conflicts[0].kind == "intent"
+
+    links = link_set(await relay.view())
+    assert (ids[0], "shop/cart.py::calculate_total", "ON") in links
+    assert not any(src_id == ids[0] and kind == "AGAINST" for src_id, _, kind in links)
+
+
+async def test_record_conflicts_with_nothing_writes_nothing(relay):
+    assert await relay.record_conflicts("B", []) == []
+
+
+async def test_resolve_conflicts_stores_the_human_choice(relay):
+    await relay.record_edit("A", CART, src(CART), CART_NEW)
+    result = await relay.check_edit("B", CART, src(CART), CART_NEW.replace("shipping=5", "shipping=6"))
+    ids = await relay.record_conflicts("B", result.conflicts)
+
+    assert await relay.resolve_conflicts(ids, "override") == len(ids)
+    resolutions = {
+        n["id"]: n["props"]["resolution"] for n in (await relay.view())["nodes"] if n["label"] == "Conflict"
+    }
+    assert set(resolutions.values()) == {"override"}
+
+    assert await relay.resolve_conflicts([], "adopt") == 0
+    with pytest.raises(ValueError):
+        await relay.resolve_conflicts(ids, "maybe")

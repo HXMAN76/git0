@@ -22,6 +22,7 @@ from git0.core.db import get_db
 from git0.core.queries import Q
 
 _TENANT_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+RESOLUTIONS = frozenset({"adopt", "override", "pause"})  # the three human choices on a blocked write
 
 
 def _gist(text: str, limit: int = 90) -> str:
@@ -264,15 +265,81 @@ class CodeRelay:
         rows = _rows(await self.graph.query(Q["code_acknowledge"], {"agent": agent, "ids": change_ids}))
         return int(rows[0]["n"]) if rows else 0
 
+    async def record_conflicts(self, agent: str, conflicts: list[ConflictInfo]) -> list[str]:
+        """Write the conflicts a blocked edit raised as Conflict nodes (resolution 'pending'). One query.
+
+        Returns the new Conflict ids in input order. Intent conflicts are recorded too, with no AGAINST link.
+        """
+        if not conflicts:
+            return []
+        ts = _now_ms()
+        rows_in = [
+            {
+                "id": uuid.uuid4().hex[:12],
+                "peer": c.peer,
+                "kind": c.kind,
+                "message": c.message,
+                "ts": ts,
+                "symbol": c.symbol,
+                "change_id": c.peer_change_id or "",  # '' matches no Change; a null would need a special case
+            }
+            for c in conflicts
+        ]
+        rows = _rows(
+            await self.graph.query(Q["code_record_conflicts"], {"agent": agent, "conflicts": rows_in})
+        )
+        found = {r["id"] for r in rows}
+        missing = [r["id"] for r in rows_in if r["id"] not in found]
+        if missing:  # fail loudly: the UI must not show a conflict node the graph does not have
+            raise RuntimeError(
+                f"record_conflicts: {len(missing)} of {len(rows_in)} conflicts were not written"
+            )
+        return [r["id"] for r in rows_in]
+
+    async def resolve_conflicts(self, conflict_ids: list[str], resolution: str) -> int:
+        """Set the human's choice on recorded conflicts. Returns how many Conflict nodes matched."""
+        if resolution not in RESOLUTIONS:
+            raise ValueError(f"resolution must be one of {sorted(RESOLUTIONS)}, got {resolution!r}")
+        if not conflict_ids:
+            return 0
+        rows = _rows(
+            await self.graph.query(
+                Q["code_resolve_conflicts"], {"ids": conflict_ids, "resolution": resolution}
+            )
+        )
+        return int(rows[0]["n"]) if rows else 0
+
     async def view(self) -> dict:
         """The whole session graph in the shape the IDE's graph panel draws."""
         nodes = []
         for r in _rows(await self.graph.ro_query(Q["code_view_nodes"])):
-            props = {k: r[k] for k in ("path", "signature", "summary", "task", "agent", "active", "removed")}
+            props = {
+                k: r[k]
+                for k in (
+                    "path",
+                    "signature",
+                    "summary",
+                    "task",
+                    "agent",
+                    "active",
+                    "removed",
+                    "ts",
+                    "peer",
+                    "message",
+                    "resolution",
+                )
+            }
             props = {k: v for k, v in props.items() if v is not None}
             if r["label"] == "Agent":
                 props["label"] = r["agent_label"]
-            name = r["name"] or r["summary"] or r["task"] or r["agent_label"] or r["id"]
+            name = (
+                r["name"]
+                or r["summary"]
+                or r["task"]
+                or (_gist(r["message"]) if r["message"] else None)
+                or r["agent_label"]
+                or r["id"]
+            )
             nodes.append(
                 {"id": r["id"], "label": r["label"], "name": name, "kind": r["kind"], "props": props}
             )
