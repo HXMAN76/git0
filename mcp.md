@@ -77,7 +77,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["mcp-session-id"],   # ← required: hook reads this header
+    expose_headers=["mcp-session-id"],  # ← required: hook reads this header
 )
 uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 ```
@@ -131,9 +131,9 @@ Fires before every `write`, `edit`, `shell`, or `read` tool call. It:
 ### Configuration (top of file)
 
 ```python
-GIT0_URL     = os.environ.get("GIT0_MCP_URL",    "http://127.0.0.1:8002/mcp")
-TENANT       = os.environ.get("GIT0_TENANT",      "shop_demo")
-MY_BRANCH    = os.environ.get("GIT0_MY_BRANCH",   "")
+GIT0_URL = os.environ.get("GIT0_MCP_URL", "http://127.0.0.1:8002/mcp")
+TENANT = os.environ.get("GIT0_TENANT", "shop_demo")
+MY_BRANCH = os.environ.get("GIT0_MY_BRANCH", "")
 SESSIONS_DIR = os.environ.get("GIT0_SESSIONS_DIR", "/absolute/path/to/.relay-sessions")
 ```
 
