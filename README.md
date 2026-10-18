@@ -18,9 +18,21 @@
 
 | Read this if you have... | |
 |-|-|
-| 60 seconds | [Try it in 60 seconds](#try-it-in-60-seconds) |
+| 60 seconds | [Pipeline](#pipeline-what-runs-where) → [Try it in 60 seconds](#try-it-in-60-seconds) |
 | 3 minutes | [The problem](#the-problem) → [How it works](#how-it-works) → [Without FalkorDB](#what-happens-without-falkordb) → [Why not SQLite?](#why-not-just-use-sqlite) |
-| 10 minutes | [Graph data model](#graph-data-model) → [Key Cypher queries](#key-cypher-queries) → [Pipeline](#pipeline-what-runs-where) → [Quickstart](#quickstart-3-commands) |
+| 10 minutes | [Graph data model](#graph-data-model) → [Key Cypher queries](#key-cypher-queries) → [Measured and tested](#measured-and-tested) → [Quickstart](#quickstart-3-commands) |
+
+## Pipeline: what runs where
+
+![Git0 pipeline: Pydantic AI agents call Gemini on Google Cloud for inference; tool hooks talk to FalkorDB in Docker; FastAPI and Python serve it](docs/img/pipeline.png)
+
+1. **Browser (React).** The IDE at `/ide/` is a VS Code-like view built with Monaco: both clones side by side, two agent chats, the Relay log and the graph panel. FastAPI serves it as a static build on the AWS EC2 host, behind Caddy (auto-HTTPS on `sslip.io`).
+2. **Agents.** Two **Pydantic AI** harness agents (A is Alice, B is Bob), each with only four tools: `list_files`, `read_file`, `write_file` and `team_context`. Each one works only inside its own clone.
+3. **Model inference.** The agents call **Gemini** on Google Cloud. Each agent has its own primary model and a fallback chain, which spreads the load across free-tier rate limits.
+4. **Tool hooks → MCP → FalkorDB.** Every tool call goes through Pre/PostToolUse hooks. The hooks call the git0 MCP server, mounted at `/mcp/` in the same FastAPI process, which runs the `code_*` Cypher against **FalkorDB in Docker** on the same host. FalkorDB's port is never public.
+5. **FastAPI (Python)** runs the sessions: at most 8 live at once, each with its own graph and clones. A session is deleted on "End session", on tab close, after 15 minutes idle, and on restart.
+6. **Deploy.** A push to `main` runs CI (ruff, Cypher-docs drift check, pytest against a real FalkorDB, web tests and build). When CI is green, GitHub Actions builds the image, pushes it to ECR and redeploys the EC2 host over SSM.
+
 
 ## Try it in 60 seconds
 Open **https://15-252-11-70.sslip.io/ide/**. You get your own session: a private FalkorDB graph (`ide_<session>`) and two fresh clones of a tiny Python shop (`demo_project/`), one on "Alice's laptop" and one on "Bob's laptop".
@@ -71,13 +83,13 @@ Every tool call an agent makes passes through hooks ([`ide/hooks.py`](src/git0/i
   | `reverse_dependency` | I'm changing a function that a teammate's new code reaches through `CALLS*1..3` | block |
   | `intent` | a teammate announced they're about to work on this function | warn |
 
-  A blocking hit **denies the write**. The conflict is written to the graph as a `Conflict` node, the human picks, and the choice is stored on that node.
+  A blocking hit **denies the write**. The conflict is written to the graph as a `Conflict` node (`resolution: 'pending'`), the human picks, and the choice is stored on that node.
 - **Before a read**, `code_peer_activity` gives the agent heads-ups about teammate changes, so it codes against the latest picture.
 - **Each user prompt** is announced as an `Intent` that targets the functions it names.
 - **Deterministic authority.** Python diffs the parsed code, Cypher finds the clashing changes, and the human decides. The LLM only writes code. It never decides whether a write is safe.
 - **Fail loudly.** If the relay can't be reached, the write is **denied** with the error shown ("the git0 relay could not check this write"). An unchecked write never goes through.
 
-Any MCP harness (Claude Code, Cursor, Gemini CLI) can use the same `code_*` tools at `/mcp/`. See [mcp.md](mcp.md).
+Any MCP harness (Command Code, Claude Code, Cursor, Gemini CLI) can use the same `code_*` tools at `/mcp/`. See [mcp.md](mcp.md).
 
 ## What happens without FalkorDB
 **Git0 Relay stops. There is no other store.**
@@ -110,17 +122,6 @@ To be fair: SQLite could store these rows, and it has transactions. Here is what
 
 Git0's core questions are path questions: what calls this, who touched it, what reaches it. In a graph database each one is a single Cypher pattern. In SQL each becomes a recursive CTE.
 
-## Pipeline: what runs where
-
-![Git0 pipeline: Pydantic AI agents call Gemini on Google Cloud for inference; tool hooks talk to FalkorDB in Docker; FastAPI and Python serve it](docs/img/pipeline.png)
-
-1. **Browser (React).** The IDE at `/ide/` is a VS Code-like view built with Monaco: both clones side by side, two agent chats, the Relay log and the graph panel. FastAPI serves it as a static build on the AWS EC2 host, behind Caddy (auto-HTTPS on `sslip.io`).
-2. **Agents.** Two **Pydantic AI** harness agents (A is Alice, B is Bob), each with only four tools: `list_files`, `read_file`, `write_file` and `team_context`. Each one works only inside its own clone.
-3. **Model inference.** The agents call **Gemini** on Google Cloud. Each agent has its own primary model and a fallback chain, which spreads the load across free-tier rate limits.
-4. **Tool hooks → MCP → FalkorDB.** Every tool call goes through Pre/PostToolUse hooks. The hooks call the git0 MCP server, mounted at `/mcp/` in the same FastAPI process, which runs the `code_*` Cypher against **FalkorDB in Docker** on the same host. FalkorDB's port is never public.
-5. **FastAPI (Python)** runs the sessions: at most 8 live at once, each with its own graph and clones. A session is deleted on "End session", on tab close, after 15 minutes idle, and on restart.
-6. **Deploy.** A push to `main` runs CI (ruff, Cypher-docs drift check, pytest against a real FalkorDB, web tests and build). When CI is green, GitHub Actions builds the image, pushes it to ECR and redeploys the EC2 host over SSM.
-
 ## Track 02 focus items → Git0 Relay
 | Track 02 focus item | Where it lives |
 |-|-|
@@ -134,59 +135,73 @@ Git0's core questions are path questions: what calls this, who touched it, what 
 **Track 03 fit:** every line of code traces back to the agent and task that changed it (`Change`, `Intent`). "Who owns what" is answered by `MADE` and `TOUCHED`, and the graph stays current on every write.
 
 ## Graph data model
-One graph per IDE session (`ide_<session>`):
+One graph per IDE session (`ide_<session>`), exactly as the `code_*` queries write it:
 ```
-(:File {path})-[:DEFINES]->(:Symbol {id: "<path>::<qualname>", name, kind, signature, body_hash, line, end_line})
-(:Symbol)-[:CALLS]->(:Symbol)                                   // rebuilt for a file on every recorded write
-(:Agent {id: 'A'|'B', label})-[:MADE]->(:Change {kind: added|modified|signature|removed,
-                                                 summary, old_signature, new_signature, ts})-[:TOUCHED]->(:Symbol)
-(:Agent)-[:INTENDS]->(:Intent {task, active, ts})-[:TARGETS]->(:Symbol)
-(:Agent)-[:ACKED]->(:Change)                                    // "I have seen / absorbed this change"
-(:Agent)-[:RAISED]->(:Conflict {kind, severity, resolution})-[:ON]->(:Symbol)
+(:Agent {id: 'A'|'B', label})
+(:File {path})-[:DEFINES]->(:Symbol {id: "<path>::<qualname>", name, path, kind, signature, body_hash,
+                                     line, end_line, removed})
+(:Symbol)-[:CALLS]->(:Symbol)                // rebuilt for a file on every recorded write
+(:Agent)-[:MADE]->(:Change {id, agent, ts, path, symbol, kind: added|modified|signature|removed,
+                            summary, old_signature, new_signature})-[:TOUCHED]->(:Symbol)
+(:Agent)-[:INTENDS]->(:Intent {id, agent, task, ts, active})-[:TARGETS]->(:Symbol)
+(:Agent)-[:ACKED]->(:Change)                 // "I have seen / absorbed this change"
+(:Agent)-[:RAISED]->(:Conflict {id, agent, peer, kind, message, ts,
+                                resolution: pending|adopt|override|pause})-[:ON]->(:Symbol)
 (:Conflict)-[:AGAINST]->(:Change)
 ```
+A removed function stays as a node with `removed = true`, so a `Change` always has a `TOUCHED` target that later checks can find.
 `body_hash` is a SHA-1 of the function's `ast.dump`, so a comment-only edit doesn't count as a change. The full spec is in [docs/plans/2026-10-18-ide-demo.md](docs/plans/2026-10-18-ide-demo.md).
 
 ## Key Cypher queries
 Every query lives in [`cypher/`](cypher/), one file each, with a comment saying why it exists. [docs/CYPHER.md](docs/CYPHER.md) lists them all (generated; CI checks it is current).
 
-**same_symbol**: a teammate's change I haven't acknowledged touches a function my edit touches. FalkorDB has no `EXISTS {}`, so "have I seen it?" is a pattern comprehension.
+**same_symbol** ([`code_conflicts_same_symbol.cypher`](cypher/code_conflicts_same_symbol.cypher)): a teammate's change I haven't acknowledged touches a function my edit touches. FalkorDB has no `EXISTS {}`, so "have I seen it?" is a pattern comprehension.
 ```cypher
 MATCH (ag:Agent)-[:MADE]->(peer:Change)-[:TOUCHED]->(s:Symbol)
 WHERE s.id IN $touched AND ag.id <> $agent
 WITH ag, peer, s, [(me:Agent)-[:ACKED]->(peer) | me.id] AS ackers
 WHERE NOT $agent IN ackers
-RETURN ag.id AS peer, peer.summary AS summary, s.id AS symbol
+RETURN ag.id AS peer, ag.label AS peer_label, peer.id AS change_id, peer.summary AS summary,
+       peer.kind AS change_kind, s.id AS symbol
 ```
 
-**dependency**: my new code calls a function whose contract a teammate changed.
+**dependency** ([`code_conflicts_dependency.cypher`](cypher/code_conflicts_dependency.cypher)): my new code calls a function whose contract (signature, or the function itself) a teammate changed.
 ```cypher
 UNWIND $edges AS e
-MATCH (s:Symbol) WHERE s.id = e.dst
+MATCH (s:Symbol)
+WHERE s.id = e.dst
 MATCH (ag:Agent)-[:MADE]->(peer:Change)-[:TOUCHED]->(s)
 WHERE peer.kind IN ['signature', 'removed'] AND ag.id <> $agent
 WITH e, ag, peer, s, [(me:Agent)-[:ACKED]->(peer) | me.id] AS ackers
 WHERE NOT $agent IN ackers
-RETURN e.src AS src, s.id AS dst, peer.summary AS summary
+RETURN e.src AS src, s.id AS dst, ag.id AS peer, ag.label AS peer_label, peer.id AS change_id,
+       peer.summary AS summary
 ```
 
-**reverse_dependency**: I'm changing a function that a teammate's new code reaches through up to three calls. The path comes back so the UI can light it up.
+**reverse_dependency** ([`code_conflicts_reverse.cypher`](cypher/code_conflicts_reverse.cypher)): I'm changing the contract of a function that a teammate's new code reaches through up to three calls. The path comes back so the UI can light it up.
 ```cypher
-MATCH p = (caller:Symbol)-[:CALLS*1..3]->(target:Symbol {id: $cid})
+UNWIND $contract AS cid
+MATCH (target:Symbol)
+WHERE target.id = cid
+MATCH p = (caller:Symbol)-[:CALLS*1..3]->(target)
 MATCH (ag:Agent)-[:MADE]->(peer:Change)-[:TOUCHED]->(caller)
 WHERE ag.id <> $agent
 WITH target, caller, ag, peer, [n IN nodes(p) | n.id] AS path,
      [(me:Agent)-[:ACKED]->(peer) | me.id] AS ackers
 WHERE NOT $agent IN ackers
-RETURN target.id AS symbol, caller.id AS caller, peer.summary AS summary, path
+RETURN target.id AS symbol, caller.id AS caller, ag.id AS peer, ag.label AS peer_label,
+       peer.id AS change_id, peer.summary AS summary, path
 ```
 
 **record_edit**: the symbols, removed symbols, `CALLS` edges and one `Change` per touched function, written as one all-or-nothing query (see [`code_record_edit.cypher`](cypher/code_record_edit.cypher)).
 
 ## Measured and tested
-- **Tested against a real FalkorDB in CI:** the parser (28 tests), relay graph operations (15), merge check (8), hooks, harness, sessions, sandboxing and rate limiting. Tests never mock the graph; each one gets a throwaway graph.
+- **Tested against a real FalkorDB in CI:** 250 tests pass (`make test`), including the parser (28), relay graph operations (15), merge check (8), hooks, harness, sessions, sandboxing and rate limiting. Tests never mock the graph; each one gets a throwaway graph.
 - **Without FalkorDB, every API route we tried returns 500** (tested as described [above](#what-happens-without-falkordb)).
 - **Live timings:** the Relay log in the IDE shows how long every hook call and MCP query took, as it happens. We don't publish benchmark numbers we haven't measured.
+- **Works outside our IDE.** Below, the Command Code harness runs on the **DeepSeek V4 Flash** model and connects to the git0 MCP server. The agent (Agent 2, task "harden JWT security") previewed a merge into main. It saw that its `auth_py|decision` would replace main's human-approved decision with the opposite approach, stopped before `merge_resolve`, and asked the human to choose. The preview had reported no conflicts, but its `auto_merged` list carried the clash, and the agent flagged it.
+
+![Command Code harness with DeepSeek V4 Flash using the git0 MCP tools: the agent stops before merge_resolve and shows the human a merge conflict on auth_py|decision](docs/img/commandcode-deepseek.webp)
 
 ## Tech stack
 | Layer | What |
@@ -209,7 +224,7 @@ make db-up
 ```bash
 make test
 ```
-`make setup` installs the Python and web deps. `make db-up` starts FalkorDB on `:6379` (browser UI on `:3000`). `make test` runs the test suite against the real graph.
+`make setup` installs the Python and web deps (`uv sync`, `pnpm install`). `make db-up` starts FalkorDB v4.22.1 on `:6379` (browser UI on `:3000`); stop any other FalkorDB or Redis on those ports first. `make test` runs the 250 tests against the real graph.
 
 To run the IDE: `cp .env.example .env`, add a `GEMINI_API_KEY`, then run `make api` (port 8000) and `make web`, and open **http://localhost:5173/ide/**.
 
