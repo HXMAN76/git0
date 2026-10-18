@@ -1,0 +1,16 @@
+# Same runtime image as the root Dockerfile, but uses a web/dist built on the dev machine.
+# Used by deploy/aws/ship.sh to build on the t3.small host itself (no Node build there: it is tight on RAM).
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
+COPY pyproject.toml uv.lock .python-version README.md ./
+RUN uv sync --frozen --no-dev --no-install-project
+COPY src/ ./src/
+COPY cypher/ ./cypher/
+COPY demo_project/ ./demo_project/
+RUN uv sync --frozen --no-dev
+COPY web/dist ./web/dist
+ENV PATH="/app/.venv/bin:$PATH" PORT=8000
+EXPOSE 8000
+CMD ["sh", "-c", "exec uvicorn git0.api.app:app --host 0.0.0.0 --port ${PORT}"]

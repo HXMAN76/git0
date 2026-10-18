@@ -1,6 +1,18 @@
+import os
+import tempfile
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_template_dir() -> str:
+    # config.py lives at <root>/src/git0/config.py, so parents[2] is the repo root (local dev) and
+    # /app in the Docker image (the Dockerfile copies demo_project/ to /app/demo_project).
+    local = Path(__file__).resolve().parents[2] / "demo_project"
+    if local.is_dir():
+        return str(local)
+    return "/app/demo_project"
 
 
 class Settings(BaseSettings):
@@ -16,21 +28,33 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-20b"
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-3.6-flash"
+    gemini_model: str = "gemini-3.1-flash-lite"
     # Fallback chain tried in order when the primary gemini_model returns 503.
     # Each entry creates an independent GeminiProvider; first success wins.
-    gemini_fallback_models: list[str] = [
-        "gemini-3.8-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
-        "gemini-2.5-flash-lite",
-    ]
+    gemini_fallback_models: list[str] = ["gemini-3.5-flash-lite", "gemini-3.5-flash"]
     llm_cache_dir: str = ".cache/llm"
     llm_offline: bool = False  # LLM_OFFLINE=1: serve cached extractions only (demo safety net)
     llm_tenant_rpm: int = 20  # per-tenant LLM calls/min so one judge cannot burn the shared quota
     llm_timeout_s: float = 20  # per-provider call timeout so a stalled Groq falls back to Gemini fast
 
     cors_origins: list[str] = ["http://localhost:5173"]
+
+    # --- Relay IDE demo (git0/ide). Each visitor session gets its own graph ide_<sid> and workspaces. ---
+    ide_model: str = "gemini-3.1-flash-lite"
+    ide_fallback_model: str = "gemini-3.5-flash-lite"  # tried once when the primary model errors
+    ide_max_sessions: int = 8  # live demo sessions; more gets 503 "Demo is busy"
+    ide_session_ttl_s: int = 900  # idle sessions (no API calls) are ended after this
+    ide_disconnect_grace_s: int = 120  # ended when no SSE subscriber has been attached for this long
+    ide_max_turns_per_agent: int = 8  # user messages per agent per session
+    ide_workspace_root: str = str(Path(tempfile.gettempdir()) / "git0-ide")
+    ide_mcp_url: str | None = None  # None: http://127.0.0.1:{PORT}/mcp/ (the MCP app mounted in this process)
+    ide_template_dir: str = _default_template_dir()
+
+    @property
+    def effective_ide_mcp_url(self) -> str:
+        if self.ide_mcp_url:
+            return self.ide_mcp_url
+        return f"http://127.0.0.1:{os.environ.get('PORT', '8000')}/mcp/"
 
 
 @lru_cache

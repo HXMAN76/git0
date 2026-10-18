@@ -19,6 +19,7 @@ from mcp.server.mcpserver import MCPServer as FastMCP
 
 from git0.agents.base import step
 from git0.agents.specs import AGENTS
+from git0.code.relay import CodeRelay, code_graph_for
 from git0.config import get_settings
 from git0.core.db import ensure_schema, get_db, tenant_graph
 from git0.core.merge import apply_merge, plan_merge
@@ -333,6 +334,86 @@ async def watch_branch(
             head = commits[0].id if commits else None
             return {"new_commits": [], "head": head}
         await asyncio.sleep(min(2.0, remaining))
+
+
+# ── code-context tools (IDE demo): one graph per session, tenant = session id ──
+
+
+def _relay(tenant: str) -> CodeRelay:
+    return CodeRelay(code_graph_for(tenant))
+
+
+@mcp.tool()
+async def code_announce_intent(tenant: str, agent: str, task: str, symbols: list[str]) -> dict:
+    """
+    Tell the team which functions this agent is about to change. Warns other agents (never blocks).
+
+    - symbols: symbol ids like "shop/cart.py::calculate_total"
+    Returns {intent_id}. A new intent replaces the agent's previous active one.
+    """
+    intent_id = await _relay(tenant).announce_intent(agent, task, symbols)
+    return {"intent_id": intent_id}
+
+
+@mcp.tool()
+async def code_check_edit(tenant: str, agent: str, path: str, old_source: str, new_source: str) -> dict:
+    """
+    Check a planned write before making it. Read-only: nothing is recorded.
+
+    Returns CheckResult as a dict: {conflicts: [...], touched: [symbol ids], blocking}. Each conflict has
+    kind (same_symbol | dependency | reverse_dependency | intent), severity (block | warn), symbol, peer,
+    peer_change_id, peer_summary, path and message. Block the write when blocking is true.
+    """
+    result = await _relay(tenant).check_edit(agent, path, old_source, new_source)
+    return {**result.model_dump(), "blocking": result.blocking}
+
+
+@mcp.tool()
+async def code_record_edit(
+    tenant: str,
+    agent: str,
+    path: str,
+    old_source: str,
+    new_source: str,
+    summary: str = "",
+) -> dict:
+    """
+    Record a write that landed in the agent's clone, so teammates see it in the shared graph.
+    Returns ChangeRecord as a dict: {change_ids, touched, summary}.
+    """
+    record = await _relay(tenant).record_edit(agent, path, old_source, new_source, summary)
+    return record.model_dump()
+
+
+@mcp.tool()
+async def code_peer_activity(tenant: str, agent: str) -> list[dict]:
+    """
+    Changes other agents made that this agent has not acknowledged yet (oldest first).
+    Each item: {change_id, agent, symbol, kind, summary, ts}.
+    """
+    notices = await _relay(tenant).unseen_changes(agent)
+    return [n.model_dump() for n in notices]
+
+
+@mcp.tool()
+async def code_acknowledge(tenant: str, agent: str, change_ids: list[str]) -> dict:
+    """
+    Mark peer changes as seen (synced, or the user chose to override). They stop counting as conflicts.
+    Returns {acknowledged: <number of changes that matched>}.
+    """
+    return {"acknowledged": await _relay(tenant).acknowledge(agent, change_ids)}
+
+
+@mcp.tool()
+async def code_graph(tenant: str) -> dict:
+    """The session's code graph: {nodes: [{id, label, name, kind, props}], links: [...]}."""
+    return await _relay(tenant).view()
+
+
+@mcp.tool()
+async def code_symbols(tenant: str) -> list[str]:
+    """Live symbol ids in the session's code graph, e.g. "shop/cart.py::calculate_total"."""
+    return await _relay(tenant).symbol_ids()
 
 
 # ── entrypoint ───────────────────────────────────────────────────────────────

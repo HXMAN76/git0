@@ -1,0 +1,55 @@
+/* IDE-only styles: VS Code dark theme pieces that Tailwind classes do not cover well. */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: #1e1e1e;
+  color: #cccccc;
+  font-family: 'Segoe UI', 'Segoe WPC', system-ui, sans-serif;
+  font-size: 13px;
+}
+
+/* Monaco changed-line marks. Colour per agent: A = #4fc1ff (blue), B = #c586c0 (purple). */
+.git0-changed-A {
+  background: rgba(79, 193, 255, 0.12);
+}
+
+.git0-changed-B {
+  background: rgba(197, 134, 192, 0.14);
+}
+
+.git0-gutter {
+  width: 3px !important;
+  margin-left: 3px;
+}
+
+.git0-gutter-A {
+  background: #4fc1ff;
+}
+
+.git0-gutter-B {
+  background: #c586c0;
+}
+
+/* Thin scrollbars everywhere, closer to VS Code than the browser default. */
+.ide-scroll::-webkit-scrollbar,
+aside ::-webkit-scrollbar,
+section ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+aside ::-webkit-scrollbar-thumb,
+section ::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 0;
+}
+
+aside ::-webkit-scrollbar-track,
+section ::-webkit-scrollbar-track {
+  background: transparent;
+}
