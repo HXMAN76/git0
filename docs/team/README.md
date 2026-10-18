@@ -32,25 +32,25 @@ D.deploy (P0) ────────────────────► ev
 ```
 Nobody waits: code against the contract (`core/models.py` + stub signatures). The stub raises `NotImplementedError`, so use a local fake in your tests until the real one merges.
 
-## Must-have tracker (tick at each gate, on `main` + deployed)
+## Must-have tracker (status checked against the code on 2026-10-18)
 | # | Must-have | Owner | P | Status |
 |-|-|-|-|-|
-| M1 | Semantic 3-way merge with dependents + Arbiter | A (+B) | 2 | ☐ |
-| M2 | Graph is the only channel between agents | B | 1 | ☐ |
-| M3 | All Track 02 focus items live on the scorecard | D (+A counts) | 2-3 | ☐ |
-| M4 | Deterministic merge authority (Cypher rules, LLM explains only) | A | 2 | ☐ |
-| M5 | Why-path on every answer | A + D | 2 | ☐ |
-| M6 | Concurrency proof (20 writers, 0 lost, p95) | C (+A) | 2-3 | ☐ baseline test exists |
-| M7 | Tenant isolation by graph | D (+A) | 3 | ☐ |
-| M8 | Benchmark vs 2 baselines, JSON in repo | C | 2-3 | ☐ |
-| M9 | Precedent reuse | A | 2-3 | ☐ |
-| M10 | "Not in memory" no-path proof | A + B | 2 | ☐ query exists |
-| M11 | Live 60 s judge flow | D | 2 | ☐ |
-| M12 | Fail loudly (no canned output) | B + D | 3 | ☐ |
-| M13 | Submission basics (repo, README, Cypher list, video, URL, disclosure) | C + D | 4 | ☐ |
-| M14 | Everyone explains model + queries | All | 4 | ☐ |
+| M1 | Semantic 3-way merge with dependents + Arbiter | A (+B) | 2 | ☑ `core/merge.py` + `agents/arbiter.py` |
+| M2 | Graph is the only channel between agents | B | 1 | ☑ agents read only `checkout` |
+| M3 | All Track 02 focus items live on the scorecard | D (+A counts) | 2-3 | ☑ `scorecard.cypher` + `Scorecard.tsx` |
+| M4 | Deterministic merge authority (Cypher rules, LLM explains only) | A | 2 | ☑ `(:Rule)` + human; LLM explains |
+| M5 | Why-path on every answer | A + D | 2 | ☑ `why_path.cypher` + `WhyPath.tsx` |
+| M6 | Concurrency proof (20 writers, 0 lost, p95) | C (+A) | 2-3 | ◐ 20-writer CAS test in CI; no load button or p95 |
+| M7 | Tenant isolation by graph | D (+A) | 3 | ☑ graph per room + TTL sweep |
+| M8 | Benchmark vs 2 baselines, JSON in repo | C | 2-3 | ☐ `bench/` skeleton only, no results |
+| M9 | Precedent reuse | A | 2-3 | ☑ `(:Precedent)` on the conflict card |
+| M10 | "Not in memory" no-path proof | A + B | 2 | ☑ "Not in team memory (no path)" |
+| M11 | Live 60 s judge flow | D | 2 | ☑ live, "Try the demo" bar |
+| M12 | Fail loudly (no canned output) | B + D | 3 | ☑ `LLMError` → 502 / red banner |
+| M13 | Submission basics (repo, README, Cypher list, video, URL, disclosure) | C + D | 4 | ◐ repo, README, Cypher list, URL, disclosure done; video pending |
+| M14 | Everyone explains model + queries | All | 4 | ☐ team walkthrough |
 | M15 | Every commit is one atomic Cypher query | A | 0 | ☑ `commit_cas.cypher` |
-| M16 | Entity reuse + strict JSON extraction | B | 1 | ☐ |
+| M16 | Entity reuse + strict JSON extraction | B | 1 | ☑ entity list in prompt + strict schema |
 
 ## Rituals (short, fixed)
 - **Stand-ups (10 min):** 09:00, 14:00, 21:00 IST. Each person answers: done since last, next, blocked on whom.

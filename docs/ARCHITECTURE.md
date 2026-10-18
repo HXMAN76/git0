@@ -97,6 +97,26 @@ Invariants (tests enforce these; do not break them):
 
 Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert cascade, why-path, "not in memory" proofs, tenant isolation and the scorecard all run as Cypher. Agents hold no state between turns. Stop the container and agents know nothing. Demo this.
 
+## 5b. Git0 Relay: code-context graph (IDE demo, `/ide/`)
+
+Same rules (one query per write, Cypher in `cypher/code_*.cypher`), different graph: one per IDE session, `ide_<sid>`.
+
+```
+(:File {path})-[:DEFINES]->(:Symbol {id: "<path>::<qualname>", signature, body_hash, line, end_line})
+(:Symbol)-[:CALLS]->(:Symbol)                       // rebuilt for a file on every recorded write
+(:Agent {id: 'A'|'B'})-[:MADE]->(:Change {kind, old_signature, new_signature})-[:TOUCHED]->(:Symbol)
+(:Agent)-[:INTENDS]->(:Intent {task, active})-[:TARGETS]->(:Symbol)
+(:Agent)-[:ACKED]->(:Change)                        // seen/absorbed: pulled, or the human said override
+```
+
+Flow (`src/git0/ide/`): two Pydantic AI agents on Gemini (`harness.py`), each in its own copy of `demo_project/`. Every tool call passes `RelayHooks` (`hooks.py`), which call the MCP server mounted at `/mcp/` in the same FastAPI process:
+- **PostToolUse** (after a write): `code_record_edit` parses the file (`code/parse.py`, stdlib `ast`) and records changed symbols and signature changes.
+- **PreToolUse** (before a write): `code_check_edit` runs `code_conflicts_same_symbol`, `code_conflicts_dependency` (calls a function whose signature the peer changed), `code_conflicts_reverse` (the peer's new code reaches the target through `CALLS*1..3`) and `code_conflicts_intent`. A blocking hit denies the write and asks the human: pull the peer's change, keep mine, or pause.
+- **PreToolUse** (before a read): `code_peer_activity` adds heads-ups about teammate changes to the agent's context.
+- **Merge check** (`mergecheck.py`): `git merge-file` (line-based) vs the symbol/call analysis, so the UI shows git calling a broken merge clean.
+
+Sessions (`session.py`): at most `IDE_MAX_SESSIONS` (8); graph and workspaces are deleted on End session, on tab close (sendBeacon), after 15 min idle, and orphans on process start. The room sweeper only touches `team_*`.
+
 ## 6. Integration contracts (who depends on whom)
 
 | Contract | Owner | Consumers | File |
@@ -119,7 +139,7 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 | `POST /api/{t}/commits` | `CommitRequest` → `{commit, retries}` | A | done |
 | `GET /api/{t}/facts/{id}/why` | → why-path rows | A | done |
 | `GET /api/{t}/branches/{name}/procedures` | → `Procedure[]` | A | done |
-| `POST /api/{t}/agents/{agent}/messages` | `{message, session_id}` → `AgentReply` (plain JSON; unknown agent 404). SSE streaming (`token`, `commit`, `error`, `: ping` every 15 s) is issue #10 | B `agents.step` | done (JSON) |
+| `POST /api/{t}/agents/{agent}/messages` | `{text, session_id?}` → SSE stream: `token` (reply text), `commit` (`commit_id`, `cited_fact_ids`, `branch`, `usage`), `error` (LLM failure). Unknown agent 404 | B `agents.step` | done (SSE) |
 | `POST /api/{t}/merge/preview` | `{source, target}` → `MergeResult` | A `plan_merge` | done |
 | `POST /api/{t}/merge/resolve` | `{source, target, choices, agent_id?, target_head?, source_head?}` → `MergeApplied` (`invalidated` = facts for the Arbiter to re-derive). Send the previewed heads back: if either branch moved since, 409 "preview again" | A `apply_merge` | done |
 | `POST /api/{t}/revert` | `{branch, commit_id, agent_id?}` → `RevertResult` | A `revert` | done |
@@ -127,9 +147,9 @@ Checkout, commit (CAS), log, merge-base, conflict detection, dependents/revert c
 | `POST /api/{t}/merge/explain` | `{source, target}` → `ConflictExplanation[]` (`{key, text}`, one per conflict; one LLM call, cached) | B `arbiter.explain` | done |
 | `POST /api/{t}/arbiter/rederive` | `{target, fact_ids, session_id?}` → `RederiveResult` (`replies`, `tokens` spent, `owners`, `skipped`). Send `MergeApplied.invalidated[].id` as `fact_ids` | B `arbiter.rederive` | done |
 | `POST /api/{t}/agents/{agent}/kill` | → `HandoffResult` (`successor`, `branch`, `inherited: Fact[]`, `commits`, `commit_id`, `summary`). Unknown agent or branch is 404 | B `handoff` | done |
-| `POST /api/{t}/load-test` | `{writers}` → `{commits, lost, retries, p50_ms, p95_ms}` | C `run_load` | P2 |
+| `POST /api/{t}/load-test` | `{writers}` → `{commits, lost, retries, p50_ms, p95_ms}` | C `run_load` | not built (the 20-writer proof is `test_concurrent_writers_lose_nothing`) |
 | `GET /api/{t}/scorecard` | → live Track 02 counts | A `scorecard.cypher` | done |
-| `POST /api/{t}/fork` | → `{graph, ms}` (GRAPH.COPY) | A | P3 |
+| `POST /api/{t}/fork` | → `{graph, ms}` (GRAPH.COPY) | A | not built |
 
 Any `LLMError` (provider failure, offline cache miss, tenant rate limit) comes back as **502 `{detail}`**, never 429 and never fabricated output (M12); the UI shows `detail` in a red banner. An SSE stream that has already started cannot use the 502: it sends an `error` event instead.
 

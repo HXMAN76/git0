@@ -1,5 +1,7 @@
 # Person D — Implementation Context & Demo Guide
 
+> Updated 2026-10-18 to match the code. The judge flow and the IDE demo are summarised in the [README](../README.md#try-it-in-60-seconds).
+
 **Issues:** #10 (SSE route + 3-column shell + CommitDag) · #15 (ChatPanel, ConflictCard, WhyPath, Scorecard)
 
 ---
@@ -18,14 +20,8 @@ Streams agent replies as Server-Sent Events:
 
 Uses `StreamingResponse(media_type="text/event-stream")` with `X-Accel-Buffering: no` to prevent Caddy buffering.
 
-#### Gemini Fallback Chain (`src/git0/config.py`, `src/git0/llm/client.py`)
-Primary model: `gemini-3.6-flash`. On 503/overload, retries in order:
-1. `gemini-3.8-flash`
-2. `gemini-3.5-flash-lite`
-3. `gemini-3.1-flash-lite`
-4. `gemini-2.5-flash-lite`
-
-First success wins. Only raises `LLMError` if all five fail simultaneously.
+#### LLM provider chain (`src/git0/config.py`, `src/git0/llm/client.py`)
+Providers are tried in order; the first valid answer wins: **Groq** `openai/gpt-oss-20b` (strict JSON schema, when `GROQ_API_KEY` is set), then **Gemini** `GEMINI_MODEL` (default `gemini-3.1-flash-lite`) and each model in `GEMINI_FALLBACK_MODELS` (default `gemini-3.5-flash-lite`, `gemini-3.5-flash`). Every output is validated with Pydantic. Only when all providers fail does it raise `LLMError` (API: 502, UI: red banner).
 
 #### Agent Update Rule (`src/git0/agents/specs.py`)
 Added to `_RULES` shared across all agents: when asked to UPDATE or CHANGE an existing fact, the agent must add the new value to `facts` AND put the old key in `removed_keys` so the old value is retracted. Without this, agents answered update requests conversationally without writing to the graph.
@@ -47,7 +43,7 @@ SSE via `fetch` + `ReadableStream` (not `EventSource` — that's GET-only):
 `onAgentChange(agentId)` tells App which branch is active (drives ConflictCard source).
 
 #### CommitDag (`web/src/components/CommitDag.tsx`)
-Fetches `/branches/{name}/log` for planner / scheduler / notes / main every 4s. Infers parent edges from `seq` ordering within each branch (the API `Commit` schema has no explicit `parents` field). Uses `@dagrejs/dagre` with `rankdir: TB` for layout. Branch color coding: planner=purple, scheduler=blue, notes=green, main=pink.
+Fetches `/branches/{name}/log` for planner / scheduler / notes / main every 4s and draws edges from each commit's `parents` (exposed in PR #33, so merge commits show both parents). Uses `@dagrejs/dagre` with `rankdir: LR` (left to right) for layout. Branch color coding: planner=purple, scheduler=blue, notes=green, main=pink.
 
 #### ConflictCard (`web/src/components/ConflictCard.tsx`)
 "Merge `{branch}` → main" button at the bottom of the left column. Flow:
@@ -63,7 +59,7 @@ Branch label updates when user switches agent tabs.
 On "why?" click: calls `GET /api/{tenant}/facts/{fact_id}/why`. The route returns provenance rows with `fact_id`, `commit_id`, `agent_id`, `episode_id`. All four are graph node IDs — WhyPath collects them all and passes to App's `highlight` state. MemoryCanvas dims everything not in the set.
 
 #### Scorecard (`web/src/components/Scorecard.tsx`)
-Polls `GET /api/{tenant}/scorecard` every 3s. Maps 7 Track 02 counters: facts on main, episodes, procedures, sessions resumed, handoffs, total commits, tenants live.
+Polls `GET /api/{tenant}/scorecard` every 3s. Shows 12 live counters (facts, chat turns, procedures, sessions, agents, memory updates, merges, disagreements settled, past decisions reused, undos, handoffs, live team rooms), all from one Cypher query.
 
 ---
 
@@ -71,15 +67,9 @@ Polls `GET /api/{tenant}/scorecard` every 3s. Maps 7 Track 02 counters: facts on
 
 ### Setup
 ```bash
-# Terminal 1 — FalkorDB
-docker run -p 6380:6379 falkordb/falkordb
-
-# Terminal 2 — API (from git0/)
-set -a && source .env && set +a
-uv run uvicorn git0.api.app:app --reload --port 8000
-
-# Terminal 3 — Frontend (from git0/web/)
-pnpm run dev
+make db-up   # FalkorDB v4.22.1 on :6379 (browser UI on :3000)
+make api     # FastAPI on :8000 (reads .env)
+make web     # Vite on :5173, proxies /api and /mcp to :8000
 ```
 Open `http://localhost:5173`. The seed endpoint runs automatically on first room visit.
 
