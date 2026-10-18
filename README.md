@@ -10,7 +10,7 @@ Built for **WeMakeDevs × FalkorDB Graph Hacks**: Track 02 (Agent Memory and Coo
 ```bash
 make setup        # uv sync + pnpm install
 make db-up        # FalkorDB on :6379 (browser UI on :3000), via podman or docker
-make test         # core tests against the real graph
+make test         # core tests against the real graph.
 ```
 Then `cp .env.example .env`, add a Groq key, `make api` (http://localhost:8000/docs) and `make web` (http://localhost:5173).
 
