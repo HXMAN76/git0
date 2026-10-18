@@ -1,4 +1,4 @@
-"""MCP server exposing git0/membranch tools for agent clients (DeepSeek Harness, Claude, etc.)."""
+"""MCP server exposing Git0 tools for agent clients (DeepSeek Harness, Claude, etc.)."""
 
 from git0.mcp.server import mcp
 
