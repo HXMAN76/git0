@@ -1,4 +1,4 @@
-"""MCP server that exposes git0/membranch as tools for agents (DeepSeek Harness, Claude, etc.).
+"""MCP server that exposes Git0 as tools for agents (DeepSeek Harness, Claude, etc.).
 
 Run:
     python -m git0.mcp.server          # stdio transport (default, for MCP clients)
@@ -31,9 +31,9 @@ from git0.seed import seed
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
-    "git0-membranch",
+    "git0",
     instructions=(
-        "Tools for the Membranch multi-agent memory system. "
+        "Tools for the Git0 multi-agent memory system. "
         "Each tenant is an isolated project (e.g. the repo name). "
         "Agents write structured facts to their own branch; use merge_* to reconcile. "
         "Use agent_message for a full LLM-backed turn; use commit_facts to store raw extractions."

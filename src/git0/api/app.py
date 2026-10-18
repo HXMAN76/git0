@@ -48,11 +48,29 @@ WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 logger = logging.getLogger(__name__)  # not `log`: that name is the log route below
 _sweep_lock = asyncio.Lock()  # one sweep at a time, so two sweeps never GRAPH.DELETE the same room
 
+
 # The MCP server (git0 tools + the IDE's code_* relay tools) as a streamable-HTTP ASGI app. It is mounted at
 # /mcp below; its session manager has to run inside our lifespan, because a mounted sub-app's own lifespan is
 # never started by Starlette. host=127.0.0.1 turns on MCP's DNS-rebinding check, so only local clients (the
 # IDE's own hooks) can reach it through a public Host header the check would reject.
-_mcp_http_app = mcp_server.streamable_http_app(streamable_http_path="/", host="127.0.0.1")
+class _MCPMount:
+    """Stable ASGI mount for the MCP app. The SDK's session manager can `.run()` only once per instance,
+    so each app start (a server reload, every TestClient) builds a fresh MCP app + manager in the lifespan
+    and swaps it in."""
+
+    def __init__(self) -> None:
+        self.app = None
+
+    def rebuild(self) -> None:
+        self.app = mcp_server.streamable_http_app(streamable_http_path="/", host="127.0.0.1")
+
+    async def __call__(self, scope, receive, send) -> None:
+        if self.app is None:
+            raise RuntimeError("MCP app not started: the FastAPI lifespan builds it")
+        await self.app(scope, receive, send)
+
+
+_mcp_http_app = _MCPMount()
 
 
 async def sweep_rooms(*, cap_only: bool = False) -> list[tuple[str, str]]:
@@ -94,6 +112,7 @@ async def lifespan(app: FastAPI):
     # still come up. New IDE sessions wait for it (SessionManager.create), so nothing live gets deleted.
     ide_cleanup = asyncio.create_task(_ide_cleanup(ide))
     ide_sweeper = asyncio.create_task(ide.run_sweeper())
+    _mcp_http_app.rebuild()
     try:
         async with mcp_server.session_manager.run():  # the /mcp app needs its session manager running
             yield
