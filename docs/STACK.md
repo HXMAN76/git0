@@ -7,13 +7,14 @@ Versions are what `uv sync` / `pnpm install` resolved today. Full research with 
 |-|-|-|-|
 | Language | Python | 3.12 (`.python-version`) | Every FalkorDB/LLM SDK is first-class. Matches the Docker image |
 | Package mgr | uv | 0.12+ | Lockfile, fast CI, `uv sync --frozen` in Docker |
-| Graph DB | FalkorDB | `falkordb/falkordb:latest` | Track sponsor. Multigraph per tenant, Cypher, algorithms, GRAPH.COPY |
+| Graph DB | FalkorDB | `falkordb/falkordb:v4.22.1` (pinned in compose, CI and the AWS host) | Track sponsor. Multigraph per tenant, Cypher, algorithms, GRAPH.COPY |
 | DB client | `falkordb` (asyncio) | 1.8.0 | `FalkorDB.from_url`, `select_graph`, `query`/`ro_query` with params |
 | API | FastAPI + uvicorn | 0.143 | Native SSE (`fastapi.sse`, ≥0.135), OpenAPI → typed TS client |
 | Models | Pydantic v2 + pydantic-settings | 2.14 | Shared contracts. LLM output validation |
 | LLM primary | `groq` SDK, `openai/gpt-oss-20b` | 1.7 | Strict `json_schema` structured outputs (gpt-oss only). Fast |
-| LLM fallback | `google-genai`, Gemini Flash | 2.31 | Free tier, response schema. Check the model name in AI Studio |
-| MCP | `mcp` SDK | 2.3 | Should-have: Git0 as memory for Claude Code/Cursor |
+| LLM fallback | `google-genai`, Gemini (`gemini-3.1-flash-lite`, then the `GEMINI_FALLBACK_MODELS` chain) | 2.31 | Free tier, response schema |
+| MCP | `mcp` SDK | 2.3 | Streamable HTTP, mounted at `/mcp/` in the API: memory tools + `code_*` relay tools for Claude Code, Cursor, Gemini CLI |
+| IDE agents | `pydantic-ai-slim[google,mcp]` + Gemini | 2.x | The two coding agents in `/ide/`; hooks call the MCP server |
 | Tests | pytest + pytest-asyncio | 9.1 / 1.4 | Run against a **real** FalkorDB, never mocks |
 | Lint | ruff | 0.17 | Lint + format in CI |
 
@@ -25,7 +26,8 @@ Versions are what `uv sync` / `pnpm install` resolved today. Full research with 
 | Commit DAG | `@xyflow/react` + `@dagrejs/dagre` | Clickable nodes, path highlight. gitgraph.js is unmaintained |
 | Memory graph | `@falkordb/canvas` (web component, v0.3.x) | Same renderer as the FalkorDB Browser. Fallback: `force-graph` |
 | Data | TanStack Query + `openapi-fetch` (types from `/openapi.json`) | One source of truth for the API shape |
-| Realtime | SSE (`EventSource`) | One-way stream of agent replies + scorecard. Simpler than WS |
+| Realtime | SSE over `fetch` + `ReadableStream` (agent replies are a POST, which `EventSource` can't send); the scorecard and logs poll | Simpler than WS |
+| IDE editor | `@monaco-editor/react` | VS Code-like view of both clones in `/ide/` |
 | Tests | Vitest + Testing Library | |
 
 ## Infra
