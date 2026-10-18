@@ -4,7 +4,28 @@
 
 Built for **WeMakeDevs × FalkorDB Graph Hacks**: Track 02 (Agent Memory and Coordination), also entered in Track 03.
 
-> Status: early build (Phase 0). The graph core (commit, checkout, log, merge-base, why-path) works and is tested against FalkorDB. Merge, agents, UI and benchmark are in progress (see [docs/PHASES.md](docs/PHASES.md)).
+**Live demo: https://15-252-11-70.sslip.io/ide/** (Git0 Relay IDE, two AI agents on two laptops) and https://15-252-11-70.sslip.io/ (memory-branch team room).
+
+## Git0 Relay: merge conflicts caught before they happen
+Two developers clone the same repo and each work with an AI coding agent. Every tool call the agents make passes
+**PreToolUse / PostToolUse hooks** that talk to the **git0 MCP server** (`/mcp`, streamable HTTP). The server keeps
+one shared **code-context graph in FalkorDB**: files, functions, who calls what (`CALLS`), and every change an agent
+made (`Change`) or plans to make (`Intent`).
+
+- **PostToolUse** (after a write): `code_record_edit` parses the file and records which symbols changed and whether
+  a signature changed.
+- **PreToolUse** (before a write): `code_check_edit` runs graph queries against the peer's unseen changes:
+  same function (`same_symbol`), calling a function whose signature the peer changed (`dependency`), changing a
+  function the peer's new code calls through `CALLS*1..3` (`reverse_dependency`), and announced intents (`intent`).
+  A blocking hit **denies the write** and the human chooses: pull the peer's change and rework on top, keep mine,
+  or pause.
+- **PreToolUse** (before a read): `code_peer_activity` injects heads-ups about teammate changes into the agent's context.
+
+The demo IDE (`/ide/`) runs two open-source **pydantic-ai** agents on Gemini (`gemini-3.1-flash-lite`), each in its
+own clone. Every visitor gets a fresh copy of `demo_project/` and a private graph `ide_<session>`; both are deleted
+on "End session", on tab close, after 15 min idle, and on server restart. Spec: [docs/plans/2026-10-18-ide-demo.md](docs/plans/2026-10-18-ide-demo.md).
+Code: `src/git0/code/` (parser + relay), `cypher/code_*.cypher`, `src/git0/ide/` (sessions, harness, hooks, API),
+`web/src/ide/` (UI). Connect your own harness (Claude Code, Gemini CLI, Cursor) to the same MCP tools: see [mcp.md](mcp.md).
 
 ## Quickstart (3 commands)
 ```bash

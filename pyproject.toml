@@ -15,6 +15,7 @@ dependencies = [
     "google-genai>=1.0",
     "mcp>=2.3",
     "pyyaml>=6.0",
+    "pydantic-ai-slim[google,mcp]>=2.57.0",
 ]
 
 [dependency-groups]
@@ -40,6 +41,9 @@ testpaths = ["tests"]
 markers = [
     "llm: calls a real LLM API (skipped unless GROQ_API_KEY is set)",
 ]
+
+[project.scripts]
+git0-mcp = "git0.mcp.server:main"
 
 [tool.ruff]
 line-length = 110

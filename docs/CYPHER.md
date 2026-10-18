@@ -77,6 +77,337 @@ RETURN DISTINCT f.id AS id, f.key AS key, f.o AS o
 ORDER BY key
 ```
 
+## `code_acknowledge`
+
+The agent has seen (or, on "override", accepted) these Changes. An ACKED edge is what makes a Change stop
+counting as a conflict for that agent. One write; the count of matched Changes comes back from the
+subquery's RETURN so the caller knows how many ids were real.
+Why a non-unit subquery here: the count has to come back, so this one does return rows.
+
+```cypher
+MERGE (me:Agent {id: $agent})
+WITH me
+CALL {
+  WITH me
+  UNWIND $ids AS cid
+  MATCH (c:Change {id: cid})
+  MERGE (me)-[:ACKED]->(c)
+  RETURN count(c) AS n
+}
+RETURN n
+```
+
+## `code_announce_intent`
+
+An agent says "I am about to work on these symbols". Deactivates the agent's older intents so only its
+latest task reads as active. One query: the deactivation, the new Intent and its TARGETS edges together.
+Intents are warnings only (see code_conflicts_intent): announcing is cheap and can go stale.
+
+```cypher
+MERGE (me:Agent {id: $agent})
+WITH me
+CALL {
+  WITH me
+  MATCH (me)-[:INTENDS]->(old:Intent)
+  WHERE old.active = true
+  SET old.active = false
+}
+WITH me
+CREATE (i:Intent {id: $id, agent: $agent, task: $task, ts: $ts, active: true})
+CREATE (me)-[:INTENDS]->(i)
+WITH i
+CALL {
+  WITH i
+  UNWIND $symbols AS sid
+  MATCH (s:Symbol {id: sid})
+  MERGE (i)-[:TARGETS]->(s)
+}
+RETURN i.id AS id
+```
+
+## `code_conflicts_dependency`
+
+dependency (block): the checking edit calls a function that another agent just changed the contract of
+(signature or removed) and that the checking agent has not ACKED. $edges are [{src, dst}] taken from the
+new code of the added and modified symbols, so src is the checking agent's own symbol.
+Why UNWIND first: each edge is matched on its own; an empty $edges correctly yields no conflicts.
+
+```cypher
+UNWIND $edges AS e
+MATCH (s:Symbol)
+WHERE s.id = e.dst
+MATCH (ag:Agent)-[:MADE]->(peer:Change)-[:TOUCHED]->(s)
+WHERE peer.kind IN ['signature', 'removed'] AND ag.id <> $agent
+WITH e, ag, peer, s, [(me:Agent)-[:ACKED]->(peer) | me.id] AS ackers
+WHERE NOT $agent IN ackers
+RETURN e.src AS src, s.id AS dst, ag.id AS peer, ag.label AS peer_label, peer.id AS change_id,
+       peer.summary AS summary
+```
+
+## `code_conflicts_intent`
+
+intent (warn only): another agent has an active announced intent that targets a symbol this edit touches.
+Why warn and not block: an intent is a plan, not a change, and plans go stale. The human decides.
+
+```cypher
+MATCH (ag:Agent)-[:INTENDS]->(i:Intent)-[:TARGETS]->(s:Symbol)
+WHERE i.active = true AND ag.id <> $agent AND s.id IN $touched
+RETURN s.id AS symbol, ag.id AS peer, ag.label AS peer_label, i.id AS intent_id, i.task AS task
+```
+
+## `code_conflicts_reverse`
+
+reverse_dependency (block): the checking edit changes the contract (signature) or removes a function that
+code another agent just wrote relies on. Walks CALLS up to 3 hops from each changed symbol back to callers
+that a peer touched and the checking agent has not ACKED. path = caller ... changed symbol, for the graph.
+Why the peer's Change must touch the caller: that is the code that was written against the old contract.
+
+```cypher
+UNWIND $contract AS cid
+MATCH (target:Symbol)
+WHERE target.id = cid
+MATCH p = (caller:Symbol)-[:CALLS*1..3]->(target)
+MATCH (ag:Agent)-[:MADE]->(peer:Change)-[:TOUCHED]->(caller)
+WHERE ag.id <> $agent
+WITH target, caller, ag, peer, [n IN nodes(p) | n.id] AS path,
+     [(me:Agent)-[:ACKED]->(peer) | me.id] AS ackers
+WHERE NOT $agent IN ackers
+RETURN target.id AS symbol, caller.id AS caller, ag.id AS peer, ag.label AS peer_label,
+       peer.id AS change_id, peer.summary AS summary, path
+```
+
+## `code_conflicts_same_symbol`
+
+same_symbol (block): another agent's Change touched a symbol this edit also touches, and the checking agent
+has not ACKED that Change yet. Git would conflict here or silently keep one side. Read-only.
+Why the ACKED test is a pattern comprehension and not EXISTS {}: FalkorDB has no EXISTS, and a list of
+acking agent ids plus NOT IN is the same check.
+
+```cypher
+MATCH (ag:Agent)-[:MADE]->(peer:Change)-[:TOUCHED]->(s:Symbol)
+WHERE s.id IN $touched AND ag.id <> $agent
+WITH ag, peer, s, [(me:Agent)-[:ACKED]->(peer) | me.id] AS ackers
+WHERE NOT $agent IN ackers
+RETURN ag.id AS peer, ag.label AS peer_label, peer.id AS change_id, peer.summary AS summary,
+       peer.kind AS change_kind, s.id AS symbol
+```
+
+## `code_record_conflicts`
+
+Writes the conflicts a blocked edit raised as Conflict nodes, in one query, so the graph shows the story:
+(Agent)-[:RAISED]->(Conflict)-[:ON]->(Symbol the checking agent touched) and, when a peer Change is involved,
+(Conflict)-[:AGAINST]->(Change). Every Conflict starts with resolution 'pending'; code_resolve_conflicts sets it.
+Why unit CALL blocks: each step needs the UNWIND rows and must not stop the others. An intent conflict has no
+peer Change, so its change_id is '' and the AGAINST step simply matches nothing for it.
+Why the ids come from the caller: the harness puts them in the `conflict` SSE event, so the UI can link the card.
+Why the final MATCH: it confirms each Conflict exists before the caller treats the ids as recorded.
+
+```cypher
+MERGE (me:Agent {id: $agent})
+WITH me
+CALL {
+  WITH me
+  UNWIND $conflicts AS c
+  CREATE (x:Conflict {id: c.id, agent: $agent, peer: c.peer, kind: c.kind, message: c.message, ts: c.ts,
+                      resolution: 'pending'})
+  CREATE (me)-[:RAISED]->(x)
+}
+CALL {
+  WITH me
+  UNWIND $conflicts AS c
+  MATCH (x:Conflict {id: c.id})
+  MATCH (s:Symbol {id: c.symbol})
+  MERGE (x)-[:ON]->(s)
+}
+CALL {
+  WITH me
+  UNWIND $conflicts AS c
+  MATCH (x:Conflict {id: c.id})
+  MATCH (ch:Change)
+  WHERE ch.id = c.change_id
+  MERGE (x)-[:AGAINST]->(ch)
+}
+WITH me
+UNWIND $conflicts AS c
+MATCH (x:Conflict {id: c.id})
+RETURN x.id AS id
+```
+
+## `code_record_edit`
+
+Records one file write in one query: upserts the file's symbols, marks symbols that vanished as removed,
+rebuilds the CALLS edges out of this file's symbols, and adds one Change per touched symbol.
+Why one query: a write must land all-or-nothing (FalkorDB has no transactions).
+Why CALLS are deleted before they are recreated: a call the author removed must not keep an edge alive.
+Why removed symbols stay as nodes (removed = true): a Change needs a TOUCHED target that later checks find.
+Why the sweep: a symbol the graph still DEFINES but the new source no longer has (graph drift) is retired too.
+
+```cypher
+MERGE (f:File {path: $path})
+WITH f
+MERGE (me:Agent {id: $agent})
+WITH f, me
+CALL {
+  WITH f
+  UNWIND $syms AS s
+  MERGE (n:Symbol {id: s.id})
+  SET n.name = s.name, n.path = s.path, n.kind = s.kind, n.signature = s.signature,
+      n.body_hash = s.body_hash, n.line = s.line, n.end_line = s.end_line, n.removed = false
+  MERGE (f)-[:DEFINES]->(n)
+}
+CALL {
+  WITH f
+  UNWIND $gone AS g
+  MERGE (n:Symbol {id: g.id})
+  SET n.name = g.name, n.path = g.path, n.kind = g.kind, n.removed = true
+  WITH f, n
+  MATCH (f)-[d:DEFINES]->(n)
+  DELETE d
+}
+CALL {
+  WITH f
+  MATCH (f)-[d:DEFINES]->(n:Symbol)
+  WHERE NOT n.id IN $ids
+  SET n.removed = true
+  DELETE d
+}
+CALL {
+  WITH f
+  MATCH (f)-[:DEFINES]->(n:Symbol)-[c:CALLS]->()
+  DELETE c
+}
+CALL {
+  WITH f
+  UNWIND $gone AS g
+  MATCH (n:Symbol {id: g.id})-[c:CALLS]->()
+  DELETE c
+}
+CALL {
+  WITH f
+  UNWIND $calls AS c
+  MATCH (a:Symbol {id: c.src}), (b:Symbol {id: c.dst})
+  MERGE (a)-[:CALLS]->(b)
+}
+CALL {
+  WITH f, me
+  UNWIND $changes AS ch
+  CREATE (c:Change {id: ch.id, agent: $agent, ts: $ts, path: $path, symbol: ch.symbol, kind: ch.kind,
+                    summary: ch.summary, old_signature: ch.old_signature, new_signature: ch.new_signature})
+  CREATE (me)-[:MADE]->(c)
+  WITH c, ch
+  MATCH (s:Symbol {id: ch.symbol})
+  CREATE (c)-[:TOUCHED]->(s)
+}
+RETURN f.path AS path
+```
+
+## `code_resolve_conflicts`
+
+The human's choice on a blocked write: sets resolution on each Conflict (pending -> adopt | override | pause).
+Why MATCH and not MERGE: a Conflict is created when the write is blocked, so an unknown id must not invent one.
+Why count(x): the caller gets back how many Conflicts matched, so a stale id is visible instead of silent.
+
+```cypher
+UNWIND $ids AS cid
+MATCH (x:Conflict {id: cid})
+SET x.resolution = $resolution
+RETURN count(x) AS n
+```
+
+## `code_seed`
+
+Seeds one IDE session's code graph in a single write: File and Symbol nodes, DEFINES, CALLS and Agents.
+Why one query: FalkorDB has no multi-query transactions, so a half-seeded graph must not be possible.
+Re-running is safe: every node and edge is MERGEd by its domain id.
+Why UNWIND [1] first: CALL {} subqueries need an outer row to start from. Each CALL is a unit subquery
+(no RETURN), so it runs once per outer row and an empty input list only skips its own work.
+
+```cypher
+UNWIND [1] AS _once
+CALL {
+  WITH _once
+  UNWIND $files AS fp
+  MERGE (:File {path: fp})
+}
+CALL {
+  WITH _once
+  UNWIND $symbols AS s
+  MATCH (f:File {path: s.path})
+  MERGE (n:Symbol {id: s.id})
+  SET n.name = s.name, n.path = s.path, n.kind = s.kind, n.signature = s.signature,
+      n.body_hash = s.body_hash, n.line = s.line, n.end_line = s.end_line, n.removed = false
+  MERGE (f)-[:DEFINES]->(n)
+}
+CALL {
+  WITH _once
+  UNWIND $calls AS c
+  MATCH (a:Symbol {id: c.src}), (b:Symbol {id: c.dst})
+  MERGE (a)-[:CALLS]->(b)
+}
+CALL {
+  WITH _once
+  UNWIND $agents AS ag
+  MERGE (a:Agent {id: ag.id})
+  SET a.label = ag.label
+}
+RETURN _once AS ok
+```
+
+## `code_symbol_ids`
+
+Live symbol ids (not removed) for the IDE's symbol picker and for auto-filling an intent's targets.
+Why coalesce on removed: a symbol written by an older seed may have no removed flag at all; that means live.
+
+```cypher
+MATCH (s:Symbol)
+WHERE coalesce(s.removed, false) = false
+RETURN s.id AS id
+ORDER BY id
+```
+
+## `code_unseen_changes`
+
+Other agents' Changes this agent has not ACKED yet, oldest first. Feeds the "heads-up" notices the hooks
+inject into an agent's tool results, so the agent learns about a peer's edit before it writes its own.
+
+```cypher
+MATCH (ag:Agent)-[:MADE]->(c:Change)-[:TOUCHED]->(s:Symbol)
+WHERE ag.id <> $agent
+WITH ag, c, s, [(me:Agent)-[:ACKED]->(c) | me.id] AS ackers
+WHERE NOT $agent IN ackers
+RETURN c.id AS change_id, ag.id AS agent, s.id AS symbol, c.kind AS kind, c.summary AS summary, c.ts AS ts
+ORDER BY ts
+```
+
+## `code_view_links`
+
+Every edge the IDE's graph panel draws: DEFINES, CALLS, MADE, TOUCHED, INTENDS, TARGETS, ACKED, and the
+conflict story RAISED (agent -> Conflict), ON (Conflict -> Symbol), AGAINST (Conflict -> peer Change).
+Endpoints are returned as the same ids code_view_nodes uses (coalesce(id, path)), so the UI can join them.
+
+```cypher
+MATCH (a)-[r]->(b)
+WHERE type(r) IN ['DEFINES', 'CALLS', 'MADE', 'TOUCHED', 'INTENDS', 'TARGETS', 'ACKED',
+                  'RAISED', 'ON', 'AGAINST']
+RETURN coalesce(a.id, a.path) AS source, coalesce(b.id, b.path) AS target, type(r) AS type
+```
+
+## `code_view_nodes`
+
+Every File, Symbol, Change, Agent, Intent and Conflict node for the IDE's graph panel, one row each.
+Why coalesce(id, path): File nodes are keyed by path; every other label has an id. The UI wants one id field.
+Only the properties the panel shows are returned, so the response stays small. ts is returned for Change,
+Intent and Conflict so the panel can draw a timeline.
+
+```cypher
+MATCH (n)
+WHERE n:File OR n:Symbol OR n:Change OR n:Agent OR n:Intent OR n:Conflict
+RETURN labels(n)[0] AS label, coalesce(n.id, n.path) AS id, n.name AS name, n.path AS path,
+       n.kind AS kind, n.signature AS signature, n.summary AS summary, n.task AS task,
+       n.label AS agent_label, n.agent AS agent, n.active AS active, n.removed AS removed,
+       n.ts AS ts, n.peer AS peer, n.message AS message, n.resolution AS resolution
+```
+
 ## `commit_ancestors`
 
 The immutable ancestor id list of commit $commit (empty for the root). revert uses it to check that the

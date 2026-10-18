@@ -37,13 +37,22 @@ from git0.core.models import (
 from git0.core.repo import CommitConflictError, MemoryRepo, new_id
 from git0.core.revert import revert
 from git0.core.rooms import sweep
+from git0.ide.api import router as ide_router
+from git0.ide.session import SessionManager, get_manager
 from git0.llm import client as llm_client
 from git0.llm.client import LLMError
+from git0.mcp.server import mcp as mcp_server
 from git0.seed import seed
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 logger = logging.getLogger(__name__)  # not `log`: that name is the log route below
 _sweep_lock = asyncio.Lock()  # one sweep at a time, so two sweeps never GRAPH.DELETE the same room
+
+# The MCP server (git0 tools + the IDE's code_* relay tools) as a streamable-HTTP ASGI app. It is mounted at
+# /mcp below; its session manager has to run inside our lifespan, because a mounted sub-app's own lifespan is
+# never started by Starlette. host=127.0.0.1 turns on MCP's DNS-rebinding check, so only local clients (the
+# IDE's own hooks) can reach it through a public Host header the check would reject.
+_mcp_http_app = mcp_server.streamable_http_app(streamable_http_path="/", host="127.0.0.1")
 
 
 async def sweep_rooms(*, cap_only: bool = False) -> list[tuple[str, str]]:
@@ -70,14 +79,31 @@ async def _sweep_forever() -> None:
             logger.exception("room sweep failed")
 
 
+async def _ide_cleanup(ide: SessionManager) -> None:
+    try:
+        await ide.cleanup_orphans()
+    except Exception:
+        logger.exception("IDE orphan cleanup failed; the demo still runs, but old ide_* graphs may linger")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     sweeper = asyncio.create_task(_sweep_forever())
-    yield
-    sweeper.cancel()
-    with suppress(asyncio.CancelledError):
-        await sweeper
-    await close_db()
+    ide = get_manager()
+    # Orphan cleanup runs in the background: with FalkorDB down it takes ~50 s to fail, and the server should
+    # still come up. New IDE sessions wait for it (SessionManager.create), so nothing live gets deleted.
+    ide_cleanup = asyncio.create_task(_ide_cleanup(ide))
+    ide_sweeper = asyncio.create_task(ide.run_sweeper())
+    try:
+        async with mcp_server.session_manager.run():  # the /mcp app needs its session manager running
+            yield
+    finally:
+        for task in (ide_cleanup, ide_sweeper, sweeper):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        await ide.shutdown()
+        await close_db()
 
 
 app = FastAPI(title="Git0", version=__version__, lifespan=lifespan)
@@ -374,6 +400,9 @@ async def agent_message(
         },
     )
 
+
+app.include_router(ide_router)
+app.mount("/mcp", _mcp_http_app, name="mcp")  # MCP clients use http://host/mcp/
 
 if WEB_DIST.is_dir():  # single deploy: FastAPI serves the built React app (mounted last)
     app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="web")
