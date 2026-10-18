@@ -2,7 +2,7 @@
 
 <img src="docs/img/logo.webp" alt="Git0 logo" width="220"/>
 
-# Git0 Relay
+# Git0
 
 **Catch merge conflicts before they happen.<br/>Two AI coding agents, two clones, and one FalkorDB graph that stops a colliding write before it is made.**
 
